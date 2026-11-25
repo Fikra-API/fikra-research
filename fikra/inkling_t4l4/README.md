@@ -13,16 +13,27 @@ GPUs. Ships no weights.
 | Attention, norms, router, embeddings | bf16 |
 | Attention-residual queries, MoE gate bias | fp32 |
 | Vision tower | configured (23 layers) but **not in the released weights** |
-| MTP head | configured (3 layers, block 8) but **not in the released weights** |
+| MTP head | ships separately as `mtp.safetensors` (636 MB, 3 layers 0-2, block 8, markov_rank 256, intermediate 9216); no `mtp.*` keys in the main index |
 
 Only the expert tensors are quantized, so on T4 the software dequant work is
 confined to the MoE path; attention runs bf16.
+
+Phase 1 is text-only. Vision stays skipped. The shipped MTP head is not a
+training target: decode baselines are reported both without MTP and with its
+speculative decoding, plus the acceptance length.
 
 ## Loop structure
 
 `loop_config`: `core_start=6`, `core_end=18`, `num_passes=3`. Layers 6-17 run
 three times, layers 0-5 and 18-23 once: 6 + 36 + 6 = 48 layer-equivalents,
 which matches MTP's `target_layer_ids` of 5, 23, 41, 48.
+
+Speculative decoding with MTP needs two partial-decode states. Target layers
+5 and 23 are the exits of the first and third core pass, and 48 is the exit
+of the last layer. All three sit in the same forward pass, so a fused core
+ring buffer of two physical slot sets (6-11 and 12-17), which records and
+reads during the 3x replay, is needed to keep MTP on one card. Without it,
+MTP on T4 costs extra forward passes and is no longer a speculative decode.
 
 ## Harness
 
@@ -39,7 +50,7 @@ FRES 50, GPQA-Diamond 50) using the official scorer per suite.
 
 ```sh
 pip install -r ../../requirements.txt
-python -m nexus.inkling.benchmark   # or import the harness from a notebook
+python -m fikra.inkling_t4l4.benchmark   # or import the harness from a notebook
 ```
 
 A run without CUDA raises: CPU tok/s is not a result.
