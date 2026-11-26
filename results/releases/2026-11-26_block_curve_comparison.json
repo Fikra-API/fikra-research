@@ -44,5 +44,7 @@
     "strata": "block cost grows 15.0x from N=2 to N=32",
     "meaning": "At N=8 ours costs 1.01x its N=2 cost; Strata costs 3.07x. If a verify block is the unit speculative decoding pays for, Strata's unit grows and ours does not, which is the whole argument for writing the kernel.",
     "limit": "Flat block cost is necessary, not sufficient. Achieved bandwidth is 5-6 GB/s of a 320 GB/s peak, so absolute cost is high even if it scales well. End-to-end tok/s is not demonstrated by this file."
-  }
+  },
+  "status": "PROVISIONAL",
+  "status_note": "Marked provisional 2026-11-27 per instruction. Pass 3 showed a 139% drift in a control config within one session and a median SM clock of 585 of 1590 MHz, so a shape comparison measured without clock logging and without spread reporting cannot be treated as settled. The direction of the effect (our curve flatter than Strata's) is still expected to hold because it compares scaling within each run rather than absolute times, but it must be re-measured under the pass 3 harness before citation."
 }
