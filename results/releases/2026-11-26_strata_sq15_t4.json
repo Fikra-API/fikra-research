@@ -1,7 +1,7 @@
 {
   "when": "2026-11-26",
   "what": "Strata SQ-15 on one Kaggle T4, first real headless measurement",
-  "hardware": "2x Tesla T4 (15360 MiB each), sm75; run used one card",
+  "hardware": "2x Tesla T4 (15360 MiB each), sm75. This run did NOT restrict the device: Strata auto-split the pack across BOTH cards (7839 MiB on gpu0, 8491 MiB on gpu1). Label: 2xT4 (auto-split).",
   "pack": {
     "name": "Inkling-2-Mini-SQ-15.strata",
     "gb": 14.35,
@@ -34,5 +34,7 @@
     "reason_from_strata_itself": "Drafting off: a 128-token probe on this card measured 0.98x with drafting (code 0.98x, chat 0.98x) (plain decoding 19 tok/s); it needs 1.10x.",
     "source": "strata launch JSON notice, schema_version 1"
   },
-  "verdict": "Strata runs Inkling 2 Mini headless on a T4 at 18.3-19 tok/s. Its built-in DSpark draft is auto-disabled on sm75 because acceptance does not beat the 1.10x break-even. That is a measured negative result for speculative decoding on T4 and it contradicts the plan's assumption that spec decode is the route to 60 tok/s on this card."
+  "verdict": "Strata runs Inkling 2 Mini headless on a T4 at 18.3-19 tok/s. Its built-in DSpark draft is auto-disabled on sm75 because acceptance does not beat the 1.10x break-even. That is a measured negative result for speculative decoding on T4 and it contradicts the plan's assumption that spec decode is the route to 60 tok/s on this card. Scope caveat: measured on 2xT4 auto-split, so this is not yet a single-card number.",
+  "device_scope": "2xT4_auto_split",
+  "correction": "Originally labelled a single-T4 run. That was wrong: the pack spanned both cards. Targets are per single T4, so a restricted run is required and is filed separately."
 }
