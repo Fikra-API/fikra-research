@@ -1,0 +1,38 @@
+{
+  "when": "2026-11-26",
+  "what": "Strata SQ-15 on one Kaggle T4, first real headless measurement",
+  "hardware": "2x Tesla T4 (15360 MiB each), sm75; run used one card",
+  "pack": {
+    "name": "Inkling-2-Mini-SQ-15.strata",
+    "gb": 14.35,
+    "claimed_agreement": "96.68% next-token, ppl 6.177 vs 6.141"
+  },
+  "server": {
+    "startup_seconds": 275,
+    "port": 8080,
+    "context": 4096,
+    "model_id": "inkling-2-mini-sq-15"
+  },
+  "vram_after_load_mib": {
+    "gpu0": 7839,
+    "gpu1": 8491,
+    "note": "both cards show usage; the pack spans them even though only one was targeted"
+  },
+  "generation": {
+    "prompt_tokens": 35,
+    "completion_tokens": 208,
+    "reasoning_tokens": 114,
+    "prompt_per_second": 62.6,
+    "predicted_per_second": 18.3,
+    "predicted_ms": 11387.1,
+    "wall_seconds": 11.97,
+    "draft_n": 0,
+    "draft_n_accepted": 0
+  },
+  "dspark": {
+    "enabled": false,
+    "reason_from_strata_itself": "Drafting off: a 128-token probe on this card measured 0.98x with drafting (code 0.98x, chat 0.98x) (plain decoding 19 tok/s); it needs 1.10x.",
+    "source": "strata launch JSON notice, schema_version 1"
+  },
+  "verdict": "Strata runs Inkling 2 Mini headless on a T4 at 18.3-19 tok/s. Its built-in DSpark draft is auto-disabled on sm75 because acceptance does not beat the 1.10x break-even. That is a measured negative result for speculative decoding on T4 and it contradicts the plan's assumption that spec decode is the route to 60 tok/s on this card."
+}
