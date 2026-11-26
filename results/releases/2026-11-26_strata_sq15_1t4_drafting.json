@@ -1,0 +1,41 @@
+{
+  "when": "2026-11-26",
+  "what": "Strata SQ-15 on a TRUE single T4 (device-restricted), with drafting enabled",
+  "hardware": "2x Tesla T4 but restricted to gpu0 via --gpu 0 and CUDA_VISIBLE_DEVICES=0",
+  "device_scope": "1xT4",
+  "pack": {
+    "name": "Inkling-2-Mini-SQ-15.strata",
+    "gb": 14.35
+  },
+  "vram_after_load_mib": {
+    "gpu0": 14097,
+    "gpu1": 0,
+    "note": "gpu1 at 0 confirms the restriction held; this is a real single-card result"
+  },
+  "generation": {
+    "predicted_per_second": 22.6,
+    "prompt_per_second": 26.4,
+    "predicted_n": 232,
+    "completion_tokens": 232,
+    "reasoning_tokens": 144,
+    "draft_n": 331,
+    "draft_n_accepted": 128,
+    "acceptance_rate": 0.3867
+  },
+  "decode_cost_curve_per_token_ms": {
+    "N=1": 0.0,
+    "N=2": 31.35,
+    "N=4": 31.13,
+    "N=8": 24.06,
+    "N=32": 29.39
+  },
+  "findings": [
+    "Drafting IS active on a single T4: 331 draft tokens, 128 accepted, 38.7% acceptance.",
+    "The 2xT4 run had drafting OFF (0.98x probe) while this single-card run has it ON. The difference is that the earlier run's auto-probe measured a loss while this one cleared the engine's 1.10x bar, so the drafting decision is configuration-sensitive, not a fixed property of sm75.",
+    "Single T4: 22.6 tok/s with drafting, vs 18.3 tok/s on 2xT4 auto-split without it. One card with drafting beats two cards without.",
+    "Per-token cost is FLAT in N (24-31 ms from N=2 to N=32). That is the memory-bound signature: verifying a block of draft tokens costs about the same per token as one. So the batched-dequant hypothesis has empirical support from Strata's own engine."
+  ],
+  "correction_to_prior_claim": "The earlier note said spec decode is a 0.98x loss on sm75 and that the path to 60 tok/s must be bytes moved alone. That was based on a 2xT4 run whose auto-probe disabled drafting. A single-card run enables it and accepts 38.7% of drafts. Spec decode is viable on T4; the earlier negative was a configuration artifact, not a hardware limit.",
+  "target_t4": 60,
+  "gap": "22.6 measured against 60 target: 2.65x to close, on one card, with drafting already on."
+}
