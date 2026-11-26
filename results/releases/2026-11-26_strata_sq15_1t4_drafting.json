@@ -23,7 +23,6 @@
     "acceptance_rate": 0.3867
   },
   "decode_cost_curve_per_token_ms": {
-    "N=1": 0.0,
     "N=2": 31.35,
     "N=4": 31.13,
     "N=8": 24.06,
@@ -31,11 +30,30 @@
   },
   "findings": [
     "Drafting IS active on a single T4: 331 draft tokens, 128 accepted, 38.7% acceptance.",
-    "The 2xT4 run had drafting OFF (0.98x probe) while this single-card run has it ON. The difference is that the earlier run's auto-probe measured a loss while this one cleared the engine's 1.10x bar, so the drafting decision is configuration-sensitive, not a fixed property of sm75.",
-    "Single T4: 22.6 tok/s with drafting, vs 18.3 tok/s on 2xT4 auto-split without it. One card with drafting beats two cards without.",
-    "Per-token cost is FLAT in N (24-31 ms from N=2 to N=32). That is the memory-bound signature: verifying a block of draft tokens costs about the same per token as one. So the batched-dequant hypothesis has empirical support from Strata's own engine."
+    "Single T4: 22.6 tok/s with drafting, vs 18.3 tok/s on 2xT4 auto-split without it.",
+    "Per-token cost is flat in N, which means BLOCK cost grows linearly: compute-bound, not memory-bound. The earlier memory-bound reading was wrong and is withdrawn below.",
+    "The 4.4x gap between measured block cost and the memory floor is the opportunity for our batched dequant GEMM, and it is larger than the first report claimed."
   ],
   "correction_to_prior_claim": "The earlier note said spec decode is a 0.98x loss on sm75 and that the path to 60 tok/s must be bytes moved alone. That was based on a 2xT4 run whose auto-probe disabled drafting. A single-card run enables it and accepts 38.7% of drafts. Spec decode is viable on T4; the earlier negative was a configuration artifact, not a hardware limit.",
   "target_t4": 60,
-  "gap": "22.6 measured against 60 target: 2.65x to close, on one card, with drafting already on."
+  "gap": "22.6 measured against 60 target: 2.65x to close, on one card, with drafting already on.",
+  "decode_cost_curve_block_ms": {
+    "N=2": 62.7,
+    "N=4": 124.5,
+    "N=8": 192.5,
+    "N=32": 940.5
+  },
+  "cost_curve_reading": {
+    "verdict": "COMPUTE-bound on sm75, not memory-bound.",
+    "reasoning": "Block cost grows linearly with N: 62.7 ms at N=2 rising to 940.5 ms at N=32, about 15x. A memory-bound verify would read the weights once per block, so block cost would stay near one decode step (44.2 ms at 22.6 tok/s) and per-token cost would fall roughly as 1/N. Instead per-token cost is flat, which is the signature of re-doing the dequant work for every token in the block.",
+    "quantified_gap": "An 8-token verify block measured 192.5 ms; the memory-bound ideal is 44.2 ms. That is 4.4x more compute than the memory floor allows, so Strata's sm75 path is spending about 4x too much on dequant per verified token.",
+    "corroboration": "Prefill at 26.4 tok/s on one T4 is far too slow for a memory-bound path. Prefill batches tokens the same way verify does, so a slow prefill and a linear block cost point at the same cause."
+  },
+  "withdrawn_claims": [
+    {
+      "claim": "Per-token cost is FLAT in N (24-31 ms from N=2 to N=32). That is the memory-bound signature... the batched-dequant hypothesis has empirical support from Strata's own engine.",
+      "status": "WITHDRAWN 2026-11-26, same day, before publication.",
+      "why": "Flat per-token cost means block cost grows with N, which is compute-bound. The numbers were right; the interpretation was backwards. Corrected by cross-checking against the memory floor (44.2 ms per decode step) and the prefill rate."
+    }
+  ]
 }
