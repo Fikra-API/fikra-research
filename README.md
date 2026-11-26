@@ -18,13 +18,33 @@ else is bf16/fp32, so only the MoE path needs software dequant.
 Work in progress, in `fikra/inkling_t4l4/`:
 
 - one benchmark harness (built) — every number goes through it
-- FP4-dequant MoE GEMV kernels (Triton)
-- 16 GB memory planner
+- FP4-dequant MoE GEMV kernels (Triton, kernel #1)
+- memory planner for a 16 GB card
 - loop-aware execution
 - compressed KV cache
-- our own speculative-decoding draft head (the released checkpoint ships
-  without its MTP weights)
+- MTP speculative decoding using the shipped `mtp.safetensors` head; our own
+  draft head only if its acceptance is poor or it will not fit
 - loop-aware QLoRA
+
+Checkpoint facts the code relies on, all verified against the released files
+rather than assumed:
+
+| Fact | Value |
+|---|---|
+| Main weights | 19.53 GB, 1244 tensors, NVFP4 layers 0-19, MXFP8 20-23 |
+| Expert bytes, NVFP4 | 4,478,984 B per expert (4.5 bits/weight incl. scales) |
+| Expert bytes, MXFP8 | 8,211,456 B per expert (8.25 bits/weight incl. scales) |
+| NVFP4 scales | one FP8 E4M3 per 16 **K** elements, `[128, 2304, K/16]` |
+| MXFP8 scales | one ue8m0 per 32 **K** elements, `[128, 2304, K/32]` |
+| NVFP4 global scale | `amax / outer_scale_denominator`, denominator 2688 |
+| MTP head | `mtp.safetensors`, 635,801,416 B, 3 dense layers, intermediate 9216 |
+| MTP targets | layer ids 5, 23, 41, 48; block 8; markov_rank 256 |
+| Vision | in the main weights (`model.visual.*`, 636 MB), skipped in Phase 1 |
+
+The NVFP4 global scale and the K-major scale axis both cost a full `[N, K]`
+tensor of correctness if missed; `nvfp4.py` refuses a scale tensor that does
+not expand to the code shape instead of broadcasting. `research/nvfp4_probe.py`
+checks a checkpoint on disk and prints the inferred block width.
 
 Targets: 100+ tok/s on L4, 60+ tok/s on T4 within 16 GB, within about 1-2
 points of full-precision quality on Fikra Benchmark 500, 32k+ context on L4,
