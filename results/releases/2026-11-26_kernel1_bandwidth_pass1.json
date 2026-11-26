@@ -1,0 +1,44 @@
+{
+  "when": "2026-11-26",
+  "what": "Kernel #1 bandwidth pass 1: branchless FP4 decode + tile sweep",
+  "hardware": {
+    "device": "Tesla T4",
+    "sm": "7.5",
+    "peak_hbm_GBps": 320
+  },
+  "change_from_previous": "The earlier kernel decoded FP4 by comparing each code against all 16 table entries and summing a [BLOCK_N, BLOCK_K, 16] tensor, a 16x expansion per load. Decode is now branchless from the code bits: magnitude from the low 3 bits, sign from bit 3, and E4M3 scales arithmetically since sm75 has no fp8 dtype.",
+  "before": {
+    "w13_N1_block_ms": 10.812,
+    "w13_N1_GBps": 2.9
+  },
+  "after_default_tile": {
+    "w13_N1_block_ms": 3.5212,
+    "w13_N1_GBps": 6.8,
+    "w13_N8_block_ms": 1.6574,
+    "w13_N8_GBps": 14.4,
+    "w2_N1_block_ms": 0.6021,
+    "w2_N1_GBps": 19.8,
+    "w2_N8_block_ms": 0.626,
+    "w2_N8_GBps": 19.1
+  },
+  "best_tile_found": {
+    "BLOCK_N": 64,
+    "BLOCK_K": 32,
+    "num_warps": 2,
+    "w13_N1_block_ms": 0.9726,
+    "w13_N1_GBps": 24.6
+  },
+  "target_GBps": 150,
+  "verdict": {
+    "achieved": "24.6 GB/s at N=1 on the best tile, up from 2.9 at the start.",
+    "target": "150 GB/s. So 16% of the stated target, 7.7% of hardware peak.",
+    "honest_position": "This is real progress (8.5x on N=1 block time) and still far from the target. Bandwidth pass 1 is not the win Claude asked for, and the file says so."
+  },
+  "what_is_still_wrong": [
+    "Default tile (16/64/4 warps) is worse than the best tile by 3.6x, so the launch geometry matters more than the decode arithmetic at this size.",
+    "w13 and w2 behave differently: w2 stays flat to N=8 then degrades badly at 16/32, while w13 degrades steadily. Different contraction lengths (2304 vs 1152) mean different reuse; one schedule is unlikely to suit both.",
+    "24.6 GB/s on a 4KB-per-program tile is still launch- and latency-dominated. 2048 programs for w13 at BLOCK_N=64 across 8 experts is a lot of small work.",
+    "No CUDA graphs yet, no persistent-CTA variant, no vectorised 128-bit loads of the packed nibbles. Those were the levers Claude listed and only the decode was done."
+  ],
+  "next": "Adopt the 64/32/2 tile as the default, add 128-bit vector loads and a persistent kernel, then re-sweep. Report again only when measured."
+}
