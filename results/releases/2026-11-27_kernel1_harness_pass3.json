@@ -1,0 +1,79 @@
+{
+  "when": "2026-11-27",
+  "what": "Kernel #1 pass 3: measurement harness, and the cause of the 2x swing",
+  "answer": "THROTTLING, not machine sharing. Claude was right.",
+  "harness": {
+    "warm_up_s": 15,
+    "timing": "CUDA events, never time.time around async launches",
+    "launches_per_config": 5,
+    "inner_iterations": 20,
+    "gate": "spread (p90-p10)/median <= 20% or the number is not publishable",
+    "drift_control": "same config measured at start and end of the session",
+    "clock_logging": "nvidia-smi sampled every 100 ms throughout"
+  },
+  "clock_evidence": {
+    "samples": 1762,
+    "sm_mhz": {
+      "min": 300,
+      "max": 1590,
+      "median": 585
+    },
+    "sm_pct_of_max_boost": 37,
+    "power_w": {
+      "min": 10.85,
+      "max": 79.35,
+      "median": 30.48
+    },
+    "power_pct_of_cap": 38,
+    "temp_c": {
+      "min": 50,
+      "max": 68
+    },
+    "throttle_reasons": {
+      "0x0 (none)": 1675,
+      "0x1 (GpuIdle)": 2,
+      "0x4 (SwPowerCap)": 85
+    },
+    "reading": "The GPU spent the run at a median 585 MHz of 1590 boost and 30 W of an 80 W cap. That is a power-capped, low-occupancy state: the kernel is too small per launch to hold the clock up, so DVFS drops it, and every timing is measured at roughly a third of the clock the arithmetic assumes."
+  },
+  "drift": {
+    "control_start_median_ms": 1.1029,
+    "control_end_median_ms": 2.6403,
+    "drift_pct": 139.4,
+    "reading": "The same config drifted 2.4x between the start and end of one session, which is larger than any kernel change we have attempted. It explains the pass 1 vs pass 2 disagreement far better than the code did."
+  },
+  "sweep": {
+    "configs_tried": 48,
+    "publishable": 1,
+    "median_spread_pct": 2091.8,
+    "only_publishable": {
+      "bn": 64,
+      "bk": 64,
+      "w": 2,
+      "median_ms": 1.1552,
+      "GBps": 20.7,
+      "spread_pct": 0.9
+    },
+    "reading": "47 of 48 configurations could not be measured to within 20%. Only one config produced a stable number, and it happens to be the config the control used, which had the most warm-up."
+  },
+  "implication": {
+    "clock_headroom": "At 1590 MHz instead of 585, the same work takes 2.72x less time: 1.1552 ms -> 0.425 ms, i.e. 20.7 -> 56.3 GB/s. So a large part of the apparent bandwidth failure is clock state, not kernel quality.",
+    "but_not_an_excuse": "Even at full boost 56 GB/s is 38% of the 150 target and 18% of peak, so the kernel is still not good enough. The throttling explains the 2x noise, it does not explain the gap to 150."
+  },
+  "actions_for_pass_4": [
+    "Every timed run must keep the sustained warm-up and must report SM MHz alongside GB/s.",
+    "Report sustained-clock figures as the honest T4 number, since that is what users get.",
+    "Clock locking was attempted; the result is recorded in 01_clocks.json and was not permitted on Kaggle.",
+    "Bigger tiles and more work per launch are now justified for a different reason than reuse: they keep the GPU busy long enough that DVFS does not downclock mid-measurement."
+  ],
+  "withdrawn": [
+    {
+      "claim": "24.6 GB/s on w13 at N=1 (pass 1).",
+      "status": "WITHDRAWN. That run had no warm-up and no clock logging, so it cannot be distinguished from a favourable clock sample."
+    },
+    {
+      "claim": "Pass 2 regression of 4.07x.",
+      "status": "PARTIALLY EXPLAINED. The measured drift of 139% within one session means most of that gap was clock state, not the uint32 change. The uint32 change is neither proven nor disproven."
+    }
+  ]
+}
