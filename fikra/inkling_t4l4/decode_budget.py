@@ -89,3 +89,91 @@ def report() -> dict:
         ],
         "targets": {"T4": 60, "L4": 100},
     }
+
+
+# ---------------------------------------------------------------------------
+# Residency planning from measured routing
+# ---------------------------------------------------------------------------
+
+# Bits per weight of a demoted ("cold") expert, relative to its shipped 4-bit
+# NVFP4 / 8-bit MXFP8. A 3-bit NVFP4-style code plus the same 16-wide scale
+# group costs 3/4 of the shipped bytes; resident experts keep their full code.
+COLD_BITS = 3
+SHIPPED_BITS = {"nvfp4": 4, "mxfp8": 8}
+
+
+def residency_scale(hot_experts: dict, frac_resident: float, cold_bits: int = COLD_BITS) -> float:
+    """Multiplier on expert bytes read per token, given a residency plan.
+
+    ``hot_experts`` is ``RoutingStats.heatmap()['hot_experts']``: per layer, the
+    experts covering the chosen share of traffic, hottest first.
+    ``frac_resident`` is the share of the 128 experts per layer kept at shipped
+    precision; the rest are demoted to ``cold_bits``.
+
+    Shipped cost per layer visit is top_k experts at full precision. Planned
+    cost is: the k experts the token picks, charged 1.0 if resident and
+    cold_bits/4 if not. Because only picks landing outside the resident set get
+    cheaper, the multiplier is monotonic in frac_resident and reaches exactly
+    1.0 when everything is resident, which is the floor test.
+
+    A plan can only lower bytes, so anything above 1.0 means the inputs are
+    inconsistent and this raises instead of inflating a budget.
+    """
+    if not 0.0 <= frac_resident <= 1.0:
+        raise ValueError("frac_resident must be in [0, 1]")
+    if not hot_experts:
+        return 1.0
+    keep = max(1, min(ms.NUM_EXPERTS, int(round(frac_resident * ms.NUM_EXPERTS))))
+    cold_ratio = cold_bits / SHIPPED_BITS["nvfp4"]
+
+    planned = 0.0
+    shipped = 0.0
+    for layer in range(ms.NUM_LAYERS):
+        hot = set(list(hot_experts.get(str(layer), []))[:keep])
+        if not hot:
+            continue
+        # A token picks top_k of 128 experts. The expected number landing on
+        # the resident set is top_k * resident_fraction.
+        resident_picks = min(float(ms.TOP_K), ms.TOP_K * (len(hot) / ms.NUM_EXPERTS))
+        planned += resident_picks * 1.0 + (ms.TOP_K - resident_picks) * cold_ratio
+        shipped += ms.TOP_K
+    if shipped == 0:
+        return 1.0
+    scale = planned / shipped
+    if scale > 1.0 + 1e-9 or scale <= 0:
+        raise ValueError(
+            f"residency_scale produced {scale:.4f}; a residency plan cannot "
+            "increase bytes read. Check hot_experts and cold_bits.")
+    return scale
+
+
+def plan_from_routing(stats, devices=("T4", "L4"), contexts=(2048, 32768),
+                      frac_resident: float = 0.5, spec_accept: float = 1.0) -> dict:
+    """Turn measured routing into a decode budget a memory planner can act on.
+
+    Separated from ``report()`` because ``report()`` states the arithmetic with
+    assumed residency; this one uses the hot-expert lists we actually measured.
+    """
+    heat = stats.heatmap()["hot_experts"] if hasattr(stats, "heatmap") else stats
+    scale = residency_scale(heat, frac_resident)
+    rows = []
+    for device in devices:
+        for ctx in contexts:
+            for fused in (False, True):
+                sc = Scenario(
+                    name=f"measured residency {int(frac_resident * 100)}%, "
+                         f"{'fused' if fused else 'unfused'}, spec x{spec_accept:g}",
+                    device=device, top_k=ms.TOP_K, core_passes_fused=fused,
+                    context=ctx, weights_scale=scale, spec_accept=spec_accept)
+                hw = ms.DEVICES[device]
+                rows.append({
+                    "device": device, "context": ctx, "fused": fused,
+                    "frac_resident": frac_resident, "weights_scale": round(scale, 4),
+                    "expert_GB": round(sc.expert_bytes() / 1e9, 3),
+                    "total_GB": round(sc.total_bytes() / 1e9, 3),
+                    "tok_s_roofline": round(sc.tok_s(1.0), 1),
+                    "tok_s_at_60pct_bw": round(sc.tok_s(0.6), 1),
+                    "fits_vram": sc.total_bytes() <= hw["vram_gb"] * 1e9,
+                })
+    return {"frac_resident": frac_resident, "spec_accept": spec_accept,
+            "weights_scale": round(scale, 4), "rows": rows}
