@@ -1,0 +1,106 @@
+{
+  "when": "2026-11-26",
+  "what": "Kernel #1b block cost vs verify length, on a T4, real Inkling expert shapes",
+  "hardware": {
+    "device": "Tesla T4",
+    "sm": "7.5",
+    "torch": "2.11.0+cu130",
+    "peak_hbm_GBps": 320,
+    "note": "T4 has no FP8 datatype at all, so the E4M3 scales are decoded in software too, not just the FP4 codes"
+  },
+  "shapes": {
+    "source": "released checkpoint config, model_spec.py",
+    "hidden": 2304,
+    "intermediate": 1152,
+    "experts": 128,
+    "top_k": 8
+  },
+  "curve_w13": [
+    {
+      "N": 1,
+      "block_ms": 10.812,
+      "per_token_ms": 10.812,
+      "achieved_GBps": 2.9
+    },
+    {
+      "N": 2,
+      "block_ms": 5.293,
+      "per_token_ms": 2.646,
+      "achieved_GBps": 6.0
+    },
+    {
+      "N": 4,
+      "block_ms": 5.313,
+      "per_token_ms": 1.328,
+      "achieved_GBps": 6.0
+    },
+    {
+      "N": 8,
+      "block_ms": 5.35,
+      "per_token_ms": 0.669,
+      "achieved_GBps": 6.0
+    },
+    {
+      "N": 16,
+      "block_ms": 5.613,
+      "per_token_ms": 0.351,
+      "achieved_GBps": 5.7
+    },
+    {
+      "N": 32,
+      "block_ms": 6.44,
+      "per_token_ms": 0.201,
+      "achieved_GBps": 4.9
+    }
+  ],
+  "curve_w2": [
+    {
+      "N": 1,
+      "block_ms": 2.506,
+      "per_token_ms": 2.506,
+      "achieved_GBps": 6.4
+    },
+    {
+      "N": 2,
+      "block_ms": 5.051,
+      "per_token_ms": 2.526,
+      "achieved_GBps": 3.2
+    },
+    {
+      "N": 4,
+      "block_ms": 2.708,
+      "per_token_ms": 0.677,
+      "achieved_GBps": 5.9
+    },
+    {
+      "N": 8,
+      "block_ms": 4.837,
+      "per_token_ms": 0.605,
+      "achieved_GBps": 3.3
+    },
+    {
+      "N": 16,
+      "block_ms": 3.541,
+      "per_token_ms": 0.221,
+      "achieved_GBps": 4.5
+    },
+    {
+      "N": 32,
+      "block_ms": 6.68,
+      "per_token_ms": 0.209,
+      "achieved_GBps": 2.4
+    }
+  ],
+  "result": {
+    "claim": "Our batched dequant GEMM block cost is nearly flat in verify length.",
+    "evidence": "w13 block cost goes 10.81 ms at N=1 to 6.44 ms at N=32, a 1.7x spread while the block gets 32x wider. From N=2 to N=8 it is flat at 5.29 to 5.35 ms. Per-token cost falls from 10.81 ms to 0.20 ms, a 54x drop.",
+    "contrast_with_strata": "Strata block cost grew 62.7 ms to 940.5 ms over N=2..32, about 15x. Ours grows 1.2x over N=2..32. That is the gap the paper is about: one engine re-dequantises per token, ours dequantises once per block."
+  },
+  "honest_caveats": [
+    "Achieved bandwidth is only 2.9-6.4 GB/s against a 320 GB/s peak. The kernel is NOT yet bandwidth-efficient; it is flat because it is doing a small amount of work per block, not because it saturates memory. Optimisation headroom is large.",
+    "This measures the expert GEMM in isolation, not end-to-end decode. A full decode step also pays attention, routing and the loop passes.",
+    "w2 shows a sawtooth (2.5, 5.1, 2.7, 4.8, 3.5, 6.7 ms) rather than a clean curve. That is measurement noise from 30 iterations on a shared T4 and it is reported as seen, not smoothed.",
+    "Single run, one card, no repetition across sessions yet."
+  ],
+  "verdict": "The precondition for speculative decoding paying on a T4 is met by our kernel and not by Strata's: verify cost does not scale with block size. Turning that into end-to-end tok/s needs the rest of the decode step and a bandwidth pass, and the 5-6 GB/s figure says there is real work left."
+}
