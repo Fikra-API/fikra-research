@@ -1,0 +1,142 @@
+{
+  "when": "2026-11-26T13:56:37Z",
+  "apt": {
+    "cmd": "bash -lc apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq build-essential cmake git >/dev/null 2>&1; echo apt_done",
+    "rc": 0,
+    "seconds": 8.0,
+    "out": "apt_done\n",
+    "err": ""
+  },
+  "clone": {
+    "cmd": "git clone --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama.cpp",
+    "rc": 0,
+    "seconds": 3.3,
+    "out": "",
+    "err": "Cloning into '/tmp/llama.cpp'...\nUpdating files:  88% (4215/4744)\nUpdating files:  89% (4223/4744)\nUpdating files:  90% (4270/4744)\nUpdating files:  91% (4318/4744)\nUpdating files:  92% (4365/4744)\nUpdating files:  93% (4412/4744)\nUpdating files:  94% (4460/4744)\nUpdating files:  95% (4507/4744)\nUpdating files:  96% (4555/4744)\nUpdating files:  97% (4602/4744)\nUpdating files:  98% (4650/4744)\nUpdating files:  99% (4697/4744)\nUpdating files: 100% (4744/4744)\nUpdating files: 100% (4744/4744), done.\n"
+  },
+  "toolchain": {
+    "nvcc": {
+      "cmd": "bash -lc which nvcc && nvcc --version | tail -2 || echo NO_NVCC",
+      "rc": 0,
+      "seconds": 0.0,
+      "out": "/usr/local/cuda/bin/nvcc\nCuda compilation tools, release 13.0, V13.0.88\nBuild cuda_13.0.r13.0/compiler.36424714_0\n",
+      "err": ""
+    },
+    "cmake": {
+      "cmd": "bash -lc cmake --version | head -1 || echo NO_CMAKE",
+      "rc": 0,
+      "seconds": 0.3,
+      "out": "cmake version 3.31.10\n",
+      "err": ""
+    },
+    "cuda_home": {
+      "cmd": "bash -lc echo ${CUDA_HOME:-unset}; ls -d /usr/local/cuda* 2>/dev/null | head -5",
+      "rc": 0,
+      "seconds": 0.0,
+      "out": "/usr/local/cuda\n/usr/local/cuda\n/usr/local/cuda-13\n/usr/local/cuda-13.0\n",
+      "err": ""
+    },
+    "gcc": {
+      "cmd": "bash -lc g++ --version | head -1 || echo NO_GCC",
+      "rc": 0,
+      "seconds": 0.0,
+      "out": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\n",
+      "err": ""
+    }
+  },
+  "prepare": {
+    "cmd": "bash -lc set +e; echo '--- search:'; find /usr/local/cuda* /usr/lib -name 'libcuda.so*' 2>/dev/null | head -10; mkdir -p /usr/local/lib/cuda-stubs; SRC=$(find /usr/local/cuda* /usr/lib -name 'libcuda.so*' 2>/dev/null | head -1); if [ -n \"$SRC\" ]; then ln -sf \"$SRC\" /usr/local/lib/cuda-stubs/libcuda.so; echo linked:$SRC; else echo no-libcuda-found; fi; echo '--- CUDA::cuda_driver needs libcuda.so.1:'; ls -l /usr/lib/x86_64-linux-gnu/libcuda* 2>/dev/null; echo '--- result:'; ls -l /usr/local/lib/cuda-stubs",
+    "rc": 0,
+    "seconds": 1.7,
+    "out": "--- search:\n/usr/local/cuda-13.0/compat/libcuda.so.580.126.20\n/usr/local/cuda-13.0/compat/libcuda.so.1\n/usr/local/cuda-13.0/compat/libcuda.so\nlinked:/usr/local/cuda-13.0/compat/libcuda.so.580.126.20\n--- CUDA::cuda_driver needs libcuda.so.1:\n--- result:\ntotal 0\nlrwxrwxrwx 1 root root 49 Nov 26 13:56 libcuda.so -> /usr/local/cuda-13.0/compat/libcuda.so.580.126.20\n",
+    "err": ""
+  },
+  "configure_attempts": [
+    {
+      "flags": "stubs",
+      "rc": 0,
+      "tail": "4m3-f8_e4m3\n-- Found NCCL: /usr/lib/x86_64-linux-gnu/libnccl.so\n-- CUDA host compiler is GNU 13.3.0\n-- Including CUDA backend\n-- ggml version: 1.1.1\n-- ggml commit:  a866b4a\n-- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version \"3.0.13\")\n-- Performing Test OPENSSL_VERSION_SUPPORTED\n-- Performing Test OPENSSL_VERSION_SUPPORTED - Success\n-- OpenSSL found: 3.0.13\n-- UI: shallow clone, prebuilt UI version: latest\n-- Generating embedded license file for target: llama-app\n-- Configuring done (5.4s)\n-- Generating done (0.5s)\n-- Build files have been written to: /tmp/llama.cpp/build\n"
+    }
+  ],
+  "configure": {
+    "cmd": "bash -lc cd /tmp/llama.cpp && rm -rf build && cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 -DLLAMA_CURL=OFF -DCMAKE_LIBRARY_PATH=/usr/local/lib/cuda-stubs -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib/cuda-stubs -DCMAKE_SHARED_LINKER_FLAGS=-L/usr/local/lib/cuda-stubs > /tmp/cfg.log 2>&1; rc=$?; tail -15 /tmp/cfg.log; exit $rc",
+    "rc": 0,
+    "seconds": 6.1,
+    "out": "-- FlashAttention K-V type combinations: f16-f16;q4_0-q4_0;q8_0-q8_0;bf16-bf16;f8_e4m3-f8_e4m3\n-- Found NCCL: /usr/lib/x86_64-linux-gnu/libnccl.so\n-- CUDA host compiler is GNU 13.3.0\n-- Including CUDA backend\n-- ggml version: 1.1.1\n-- ggml commit:  a866b4a\n-- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version \"3.0.13\")\n-- Performing Test OPENSSL_VERSION_SUPPORTED\n-- Performing Test OPENSSL_VERSION_SUPPORTED - Success\n-- OpenSSL found: 3.0.13\n-- UI: shallow clone, prebuilt UI version: latest\n-- Generating embedded license file for target: llama-app\n-- Configuring done (5.4s)\n-- Generating done (0.5s)\n-- Build files have been written to: /tmp/llama.cpp/build\n",
+    "err": ""
+  },
+  "build": {
+    "cmd": "bash -lc cd /tmp/llama.cpp && cmake --build build --config Release -j 8 > /tmp/bd.log 2>&1; rc=$?; tail -25 /tmp/bd.log; exit $rc",
+    "rc": 0,
+    "seconds": 2397.5,
+    "out": "[ 99%] Built target llama-bench\n[ 99%] Linking CXX executable ../../bin/llama-diffusion-cli\n[ 99%] Built target llama-diffusion-cli\n[ 99%] Linking CXX shared library ../../bin/libllama-server-impl.so\n[ 99%] Built target llama-server-impl\n[ 99%] Building CXX object tools/server/CMakeFiles/llama-server.dir/main.cpp.o\n[ 99%] Building CXX object tools/cli/CMakeFiles/llama-cli-impl.dir/cli-context.cpp.o\n[100%] Building CXX object tools/cli/CMakeFiles/llama-cli-impl.dir/cli-client.cpp.o\n[100%] Building CXX object tools/cli/CMakeFiles/llama-cli-impl.dir/cli.cpp.o\n[100%] Linking CXX executable ../../bin/llama-server\n[100%] Built target llama-server\n[100%] Linking CXX executable ../bin/test-server-component\n[100%] Built target test-server-component\n[100%] Linking CXX shared library ../../bin/libllama-cli-impl.so\n[100%] Built target llama-cli-impl\n[100%] Building CXX object tools/cli/CMakeFiles/llama-cli.dir/main.cpp.o\n[100%] Building CXX object app/CMakeFiles/llama-app.dir/download.cpp.o\n[100%] Building CXX object app/CMakeFiles/llama-app.dir/llama.cpp.o\n[100%] Building CXX object app/CMakeFiles/llama-app.dir/__/license.cpp.o\n[100%] Linking CXX executable ../../bin/llama-cli\n[100%] Built target llama-cli\n[100%] Linking CXX executable ../bin/llama\n[100%] Built target llama-app\n[100%] Linking CXX executable ../bin/test-chat\n[100%] Built target test-chat\n",
+    "err": ""
+  },
+  "binary": "/tmp/llama.cpp/build/bin/llama-cli",
+  "backend": "cuda",
+  "gpu_support": {
+    "cmd": "bash -lc /tmp/llama.cpp/build/bin/llama-cli --list-devices 2>&1 | head -8 || true",
+    "rc": 0,
+    "seconds": 3.8,
+    "out": "Available devices:\n  CUDA0: Tesla T4 (14911 MiB, 14806 MiB free)\n  CUDA1: Tesla T4 (14911 MiB, 14806 MiB free)\n",
+    "err": ""
+  },
+  "decode": [
+    {
+      "cmd": "/tmp/llama.cpp/build/bin/llama-cli -m /tmp/Inkling-2-Mini-UD-Q2_K_XL.gguf -ngl 999 -c 2048 -n 128 -p Write a Python function that reverses a string. --no-display-prompt -t 8 --no-warmup",
+      "rc": 0,
+      "seconds": 15.0,
+      "out": "Write a Python function that reverses a string.\n\n[Start thinking]\n\nThe user wants a Python function that reverses a string. This is a simple programming request. I should provide a clear, correct implementation and perhaps mention a couple of approaches (e.g., slicing and iterative). Need final answer with code. Ensure correct syntax. We can provide concise explanation.\n\nPotential code:\ndef reverse_string(s):\n    return s[::-1]\n\nMaybe also:\ndef reverse_string(s):\n    return ''.join(reversed(s))\n\nAnd iterative:\ndef reverse_string(s):\n\n[ Prompt: 35.5 t/s | Generation: 15.7 t/s ]\n\n> \n\nExiting...\n",
+      "err": "0.05.240.197 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 12881.80 MiB on device 0: cudaMalloc failed: out of memory\n0.05.240.209 E ggml_gallocr_reserve_n_impl: failed to allocate CUDA0 buffer of size 13507547776\n0.05.240.210 E graph_reserve: failed to allocate compute buffers\n",
+      "label": "all-layers-gpu",
+      "n_gpu_layers": 999,
+      "tokens_per_s": null,
+      "generated_tokens": null,
+      "prompt_eval_present": false,
+      "no_gpu_warning": false,
+      "oom": true
+    },
+    {
+      "cmd": "/tmp/llama.cpp/build/bin/llama-cli -m /tmp/Inkling-2-Mini-UD-Q2_K_XL.gguf -ngl 20 -c 2048 -n 128 -p Write a Python function that reverses a string. --no-display-prompt -t 8 --no-warmup",
+      "rc": 0,
+      "seconds": 92.5,
+      "out": "b <pattern>     add text files using globbing pattern\n\n\n\n> Write a Python function that reverses a string.\n\n[Start thinking]\n\nThe user wants a Python function that reverses a string. Straightforward coding task. Let me think about what the best answer is.\n\nSimplest: `\"\".join(reversed(s))` or slicing `s[::-1]`. Both are valid. I can show both, maybe mention time complexity. Keep answer concise but helpful.\n\nFunction:\n\n```python\ndef reverse_string(s):\n    return s[::-1]\n```\n\nThat's the idiomatic way. Also mention `''.join(reversed(s))`.\n\n[ Prompt: 3.5 t/s | Generation: 1.6 t/s ]\n\n> \n\nExiting...\n",
+      "err": "",
+      "label": "partial-offload-20",
+      "n_gpu_layers": 20,
+      "tokens_per_s": null,
+      "generated_tokens": null,
+      "prompt_eval_present": false,
+      "no_gpu_warning": false,
+      "oom": false
+    }
+  ],
+  "decode_python": {
+    "cmd": "bash -lc python - <<\"EOF\"\nimport json, time\nfrom llama_cpp import Llama\nm = Llama(model_path=\"/tmp/Inkling-2-Mini-UD-Q2_K_XL.gguf\", n_gpu_layers=-1,\n          n_ctx=2048, n_threads=8, verbose=True)\nprompt = \"Write a Python function that reverses a string.\"\nt0 = time.perf_counter()\nout = m(prompt, max_tokens=128, temperature=0.0, echo=False)\nel = time.perf_counter() - t0\nn = len(out[\"choices\"][0][\"text\"].split())\ngen = out[\"usage\"][\"completion_tokens\"]\nres = {\"label\": \"llama-cpp-python all-gpu\", \"generated_tokens\": gen,\n       \"tokens_per_s\": gen / el if el else None, \"seconds\": round(el, 2),\n       \"fraction_words\": n}\nprint(\"===PYRESULT===\")\nprint(json.dumps(res))\nEOF",
+    "rc": 1,
+    "seconds": 0.1,
+    "out": "",
+    "err": "Traceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nModuleNotFoundError: No module named 'llama_cpp'\n"
+  },
+  "decode_python_parsed": null,
+  "summary": {
+    "what": "Inkling 2 Mini, Unsloth UD-Q2_K_XL GGUF (9.14 GB), llama.cpp, Kaggle 2x Tesla T4",
+    "backend": "cuda",
+    "devices": "2x Tesla T4, 14911 MiB each",
+    "all_layers_gpu": {
+      "generation_tok_s": 15.7,
+      "prompt_tok_s": 35.5,
+      "oom": true,
+      "oom_alloc_mib": 12881.8,
+      "note": "model loads and generates; the CUDA buffer reservation then fails, so the run ends early. Generation rate is real but short-window."
+    },
+    "partial_offload_20": {
+      "generation_tok_s": 1.6,
+      "prompt_tok_s": 3.5,
+      "oom": false,
+      "note": "runs to completion with 20/84 layers on GPU; this is the honest as-shipped end-to-end number."
+    },
+    "target_t4": 60,
+    "verdict": "as shipped on one T4: 1.6 tok/s fully resident-at-20-layers and 15.7 tok/s with all layers attempted. Target is 60. Gap is 37x at the safe configuration, 3.8x at the aggressive one."
+  }
+}

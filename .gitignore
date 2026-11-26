@@ -4,5 +4,4 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-results/*.json
-!results/.gitkeep
+# results/ is committed on purpose: raw benchmark JSON is the evidence.
