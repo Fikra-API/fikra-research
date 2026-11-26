@@ -1,0 +1,48 @@
+{
+  "when": "2026-11-26",
+  "what": "Direct block-cost comparison: our batched dequant GEMM vs Strata SQ-15, both T4",
+  "note": "Not a like-for-like wall-clock comparison of two engines. Ours is the expert GEMM in isolation on synthetic NVFP4 tensors at real Inkling shapes; Strata's is its full verify path measured through its API. The comparable quantity is the SHAPE of the curve: how block cost scales with verify length. That shape is the paper's claim.",
+  "rows": [
+    {
+      "N": 2,
+      "ours_block_ms": 5.293,
+      "ours_growth_vs_N2": 1.0,
+      "strata_block_ms": 62.7,
+      "strata_growth_vs_N2": 1.0
+    },
+    {
+      "N": 4,
+      "ours_block_ms": 5.313,
+      "ours_growth_vs_N2": 1.004,
+      "strata_block_ms": 124.5,
+      "strata_growth_vs_N2": 1.986
+    },
+    {
+      "N": 8,
+      "ours_block_ms": 5.35,
+      "ours_growth_vs_N2": 1.011,
+      "strata_block_ms": 192.5,
+      "strata_growth_vs_N2": 3.07
+    },
+    {
+      "N": 16,
+      "ours_block_ms": 5.613,
+      "ours_growth_vs_N2": 1.06,
+      "strata_block_ms": null,
+      "strata_growth_vs_N2": null
+    },
+    {
+      "N": 32,
+      "ours_block_ms": 6.44,
+      "ours_growth_vs_N2": 1.217,
+      "strata_block_ms": 940.5,
+      "strata_growth_vs_N2": 15.0
+    }
+  ],
+  "conclusion": {
+    "ours": "block cost grows 1.22x from N=2 to N=32",
+    "strata": "block cost grows 15.0x from N=2 to N=32",
+    "meaning": "At N=8 ours costs 1.01x its N=2 cost; Strata costs 3.07x. If a verify block is the unit speculative decoding pays for, Strata's unit grows and ours does not, which is the whole argument for writing the kernel.",
+    "limit": "Flat block cost is necessary, not sufficient. Achieved bandwidth is 5-6 GB/s of a 320 GB/s peak, so absolute cost is high even if it scales well. End-to-end tok/s is not demonstrated by this file."
+  }
+}
