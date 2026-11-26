@@ -27,12 +27,21 @@ def unpack_fp4(packed: torch.Tensor) -> torch.Tensor:
     return out.reshape(*packed.shape[:-1], packed.shape[-1] * 2)
 
 
-def dequant_nvfp4(packed: torch.Tensor, scales: torch.Tensor, block: int = 16) -> torch.Tensor:
-    """[N, K/2] uint8 + [N, K/16] FP8 -> float32 [N, K] (weights on last axis)."""
+def dequant_nvfp4(packed: torch.Tensor, scales: torch.Tensor, block: int = 16,
+                  outer_scale: float | None = None) -> torch.Tensor:
+    """[N, K/2] uint8 + [N, K/16] FP8 -> float32 [N, K] (weights on last axis).
+
+    ``outer_scale`` is the per-expert amax / outer_scale_denominator. The kernel
+    needs it (see gemv_triton) and the reference must apply it identically, or a
+    CPU/GPU comparison silently disagrees by that factor.
+    """
     vals = unpack_fp4(packed)
     s = scales.to(torch.float32)
     rep = s.repeat_interleave(block, dim=-1)
-    return vals * rep
+    out = vals * rep
+    if outer_scale is not None:
+        out = out * float(outer_scale)
+    return out
 
 
 def gemv_nvfp4(x: torch.Tensor, packed: torch.Tensor, scales: torch.Tensor,
