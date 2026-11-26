@@ -1,0 +1,36 @@
+{
+  "when": "2026-11-26",
+  "what": "Kernel #1 bandwidth pass 2: uint32 vector loads, wide tiles, CUDA graphs",
+  "hardware": {
+    "device": "Tesla T4",
+    "sm": "7.5",
+    "peak_hbm_GBps": 320
+  },
+  "result": "REGRESSION. Pass 2 is slower than pass 1 and the cause is measurement variance, not just the code.",
+  "numbers": {
+    "w13_N1_block_ms": {
+      "pass1_best": 0.9726,
+      "pass2_best": 3.9541,
+      "ratio": 4.07
+    },
+    "w2_N1_block_ms": {
+      "pass1": 0.6021,
+      "pass2": 1.0956,
+      "ratio": 1.82
+    },
+    "cuda_graph": {
+      "eager_ms": 2.3912,
+      "graph_ms": 2.8346,
+      "speedup": 0.84,
+      "verdict": "graph replay is SLOWER than eager; launch overhead is not the dominant cost at this tile size, so graphing adds nothing and costs a copy"
+    }
+  },
+  "smoking_gun_for_variance": "In the same run, the N=1 sweep measured 1.9595 ms for tile bn=32/bk=128/w=1, then the curve section re-measured the identical configuration at 3.9541 ms. A 2x spread on the same kernel, same tile, same process. Any single measurement on a shared T4 is therefore unreliable at the 2x level.",
+  "what_this_means": [
+    "The pass 1 number of 24.6 GB/s should also be treated as one sample, not a stable figure, until it is a median of repeated runs.",
+    "CUDA graph replay is negative here and should be dropped from the plan for now.",
+    "The uint32 vector-load change cannot be evaluated from this run because the noise band is wider than the effect being measured."
+  ],
+  "action": "Pass 3 must fix the harness before touching the kernel: warm-up, many iterations, median and spread over 5 separate launches rather than one, and report p10/p50/p90. Only numbers with a spread under 20 percent are usable for a claim.",
+  "verdict": "Pass 2 did not improve bandwidth. Reported as a failure rather than smoothed away. No bandwidth claim is being made from this run."
+}
