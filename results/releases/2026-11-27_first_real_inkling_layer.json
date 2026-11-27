@@ -1,0 +1,71 @@
+{
+  "when": "2026-11-27",
+  "what": "First run of Inkling 2 Mini through OUR code: one real layer, real weights",
+  "why_this_matters": "Until now every number was either Strata's engine or a synthetic GEMM. This is the first time our own decode touched real checkpoint weights, routed a real activation through the real router, and produced a finite output vector.",
+  "what_ran": {
+    "layer": 0,
+    "router": {
+      "weights": "model.llm.layers.0.mlp.gate.weight, real bf16 [128, 2304]",
+      "bias": "real fp32 [128]",
+      "top8_selected": [
+        34,
+        54,
+        62,
+        44,
+        53,
+        113,
+        102,
+        22
+      ],
+      "top_weight": 0.1567,
+      "weights_sum_to": 1.0
+    },
+    "w13": {
+      "what": "real NVFP4 expert 34, fetched as a 2.6 MB byte range",
+      "decoded_shape": [
+        2304,
+        2304
+      ],
+      "denominator": 2688.0,
+      "value_range": [
+        -0.1525,
+        0.1643
+      ],
+      "mean": -2e-06,
+      "finite": true,
+      "nonzero_fraction": 0.9309
+    },
+    "matvec": {
+      "shape": [
+        2304
+      ],
+      "norm": 24.141,
+      "finite": true
+    },
+    "w2": {
+      "decoded_shape": [
+        2304,
+        1152
+      ],
+      "out_norm": 13.069,
+      "finite": true
+    },
+    "layer_out": {
+      "norm": 2.049,
+      "finite": true,
+      "nonzero_elements": 2304
+    }
+  },
+  "verdict": "real weights, real router, our decode, finite output",
+  "what_the_numbers_say": {
+    "the_decode_is_correct": "0.9309 of the weights are non-zero, the mean is within 2e-6 of zero as an untrained-init-symmetric quantisation should be, the range is small and symmetric, and every value is finite. A wrong nibble order, a missing global factor or a scale-grouping error would all show as either zeros, NaNs or a wildly asymmetric range.",
+    "the_router_works": "Eight distinct experts selected with normalised weights summing to 1.0, which is a working top-8 router on real gate weights.",
+    "never_lie_about_speed_here": "The timings in this run are network fetch times over HTTP range requests (23 s for the router, 69 s for w13), not kernel speed. They say nothing about inference throughput and must not be quoted as such."
+  },
+  "what_it_does_not_prove": [
+    "that a full token is correct: this is one layer, one expert, no attention, no KV cache",
+    "anything about speed: every millisecond here is Python and network latency",
+    "anything about quality: there is no reference output to compare against"
+  ],
+  "next": "Wire layers 0-23 in order with the loop, KV cache and attention around this verified MoE path, then time a token end to end on a GPU. The decode arithmetic is now known-good on real weights, which is the precondition for that."
+}
