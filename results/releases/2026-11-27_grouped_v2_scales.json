@@ -1,0 +1,33 @@
+{
+  "when": "2026-11-27",
+  "what": "Grouped kernel v2: broadcast the E4M3 scales instead of reloading them 8x",
+  "change": "Scales were loaded with index offs_p // 8 across BLOCK_P columns, so each scale byte was requested 8 times per row per block. They are now loaded BLOCK_P // 8 wide and broadcast across 8, which is what the format states: one E4M3 scale per 8 packed bytes (16 k elements).",
+  "result": {
+    "previous_best_GBps": 46.8,
+    "v2_default_GBps": 51.6,
+    "v2_best_GBps": 59.3,
+    "best_tile": {
+      "bn": 8,
+      "bp": 128,
+      "warps": 4
+    },
+    "pct_peak": 18.5,
+    "speedup_vs_previous": 1.27
+  },
+  "against_the_budget": {
+    "parity_with_strata_needs_GBps": 77.5,
+    "now": 59.3,
+    "ratio": 0.77,
+    "measured_ceiling_GBps": 243.8,
+    "pct_of_ceiling": 24.3,
+    "projected_tok_s": 17.3,
+    "strata_tok_s": 22.6
+  },
+  "reading": "59.3 GB/s projects to 17.3 tok/s end to end, still below Strata's 22.6. So the kernel has improved 2.1x today (27.8 -> 59.3) and still has not crossed the point where a full decode would beat the baseline. Parity needs 77.5, which is another 31%.",
+  "cumulative_today": {
+    "start": 27.8,
+    "now": 59.3,
+    "factor": 2.13
+  },
+  "duration_note": "Every config in this sweep ran long enough to be labelled 'warmed' (>5 ms), because the duration sweep showed a 1.4 ms run reports 16.7 GB/s against 38.0 at 20 ms. The figure is therefore a sustained one."
+}
