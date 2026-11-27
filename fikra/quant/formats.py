@@ -111,3 +111,40 @@ def get_format(name: str) -> Format:
 
 def formats() -> list[Format]:
     return [ _REGISTRY[k] for k in sorted(_REGISTRY)]
+
+# Dense-weight formats. The dense half of a layer is two thirds of the bytes a
+# token must read, so these exist for the same reason the expert formats do: to
+# describe packing as data so no kernel has to know the model.
+
+INT8_PER_TENSOR = Format(
+    name="int8_per_tensor", bits=8, block=0, has_global_scale=True,
+    notes="e4m3 or int8 codes with ONE scale for the whole tensor. Cheapest to "
+          "implement and smallest metadata, but the worst quality per bit: a "
+          "single outlier stretches the scale for every weight.",
+)
+
+INT8_PER_BLOCK = Format(
+    name="int8_per_block", bits=8, block=32, has_global_scale=False,
+    notes="e4m3 codes, one ue8m0 scale per 32 contiguous weights. What MXFP8 "
+          "uses, and a reasonable default for attention and MLP weights when "
+          "the quality cost of a per-tensor scale is too high.",
+)
+
+INT8_PER_CHANNEL = Format(
+    name="int8_per_channel", bits=8, block=-1, has_global_scale=False,
+    notes="one scale per output channel. The usual choice for transformer "
+          "linear layers: outliers concentrate in particular channels, so a "
+          "per-channel scale keeps them inside range without a finer block "
+          "granularity. block is -1 as a sentinel for 'per row'.",
+)
+
+INT4_PER_CHANNEL = Format(
+    name="int4_per_channel", bits=4, block=-1, has_global_scale=False,
+    notes="INTEGER 4-bit codes 0..15, one scale per output channel. Not E2M1: "
+          "there is no float interpretation, so the decode is a plain int "
+          "multiply. Aggressive; expect to need per-tensor fallbacks on "
+          "attention projections.",
+)
+
+for _f in (INT8_PER_TENSOR, INT8_PER_BLOCK, INT8_PER_CHANNEL, INT4_PER_CHANNEL):
+    _REGISTRY[_f.name] = _f

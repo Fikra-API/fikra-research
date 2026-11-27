@@ -176,3 +176,62 @@ def test_unsupported_bit_width_is_loud():
     odd = F.Format(name="int3", bits=3, block=8)
     with pytest.raises(NotImplementedError):
         Q.dequant_block_numpy(np.zeros((1, 8), np.uint8), np.zeros((1, 1), np.uint8), odd)
+
+
+# --- dense formats ---------------------------------------------------------
+
+from fikra.quant.quant_ref import dequant_dense_numpy  # noqa: E402
+
+
+def test_dense_formats_are_registered():
+    for name in ("int8_per_tensor", "int8_per_block", "int8_per_channel", "int4_per_channel"):
+        assert F.get_format(name).name == name
+
+
+def test_per_channel_scale_applies_per_row():
+    codes = np.arange(8, dtype=np.uint8).reshape(1, 8) + 10
+    scales = np.array([0x38], dtype=np.uint8)      # 1.0
+    got = dequant_dense_numpy(codes, scales, F.INT8_PER_CHANNEL)
+    assert np.allclose(got[0], codes[0].astype(np.float32))
+
+
+def test_per_tensor_scale_applies_everywhere():
+    codes = np.full((2, 8), 3, dtype=np.uint8)
+    got = dequant_dense_numpy(codes, np.array([0x40], np.uint8), F.INT8_PER_TENSOR)
+    assert np.allclose(got, 2.0 * 3)
+
+
+def test_per_block_scale_changes_mid_row():
+    codes = np.ones((1, 64), dtype=np.uint8)
+    scales = np.array([0x38, 0x40], dtype=np.uint8)   # 1.0 then 2.0
+    got = dequant_dense_numpy(codes, scales, F.INT8_PER_BLOCK)
+    assert np.allclose(got[0, :32], 1.0)
+    assert np.allclose(got[0, 32:], 2.0)
+
+
+def test_dense_and_expert_formats_do_not_collide():
+    """mxfp8 is expert-side, int8_per_block is dense-side; same block, different path."""
+    assert F.MXFP8.name != F.INT8_PER_BLOCK.name
+    assert F.INT8_PER_BLOCK.block == F.MXFP8.block == 32
+
+
+def test_int4_per_channel_unpacks_two_per_byte():
+    """Dense int4 is INTEGER codes, not the E2M1 float codebook.
+
+    Code 1 decoded through the expert-side path would be 0.5; here it is the
+    integer 1.0 times the scale. The two 4-bit families must not be confused.
+    """
+    packed = np.full((1, 8), 0x11, dtype=np.uint8)   # eight nibbles of code 1
+    scales = np.array([0x38], dtype=np.uint8)        # 1.0
+    got = dequant_dense_numpy(packed, scales, F.INT4_PER_CHANNEL)
+    assert got.shape == (1, 16)
+    assert np.allclose(got, 1.0)
+
+
+def test_int4_dense_differs_from_e2m1_expert_decode():
+    """A code of 6 is 4.0 as E2M1 and 6.0 as an integer."""
+    assert float(F.e2m1_code_values()[6]) == 4.0
+    packed = np.full((1, 8), 0x66, dtype=np.uint8)
+    scales = np.array([0x38], dtype=np.uint8)
+    got = dequant_dense_numpy(packed, scales, F.INT4_PER_CHANNEL)
+    assert np.allclose(got, 6.0, atol=1e-6)

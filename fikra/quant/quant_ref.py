@@ -34,6 +34,56 @@ def _decode_e2m1(codes: np.ndarray) -> np.ndarray:
     return e2m1_code_values()[np.asarray(codes, dtype=np.int16) & 0x0F]
 
 
+def _e4m3_signed_scale_or_int8(scales: np.ndarray, signed: bool) -> np.ndarray:
+    """Interpret scale bytes as e4m3 (default) or as signed int8 fractions.
+
+    Dense checkpoints in the wild use both; the format, not the kernel, decides.
+    """
+    if signed:
+        b = np.asarray(scales, dtype=np.int8).astype(np.float32)
+        return b / 127.0
+    return e4m3_to_float(scales)
+
+
+def dequant_dense_numpy(
+    packed: np.ndarray,
+    scales: np.ndarray,
+    fmt: Format,
+    signed_codes: bool = False,
+    signed_scales: bool = False,
+) -> np.ndarray:
+    """Decode a DENSE weight matrix for the int8/int4 per-channel families.
+
+    ``packed`` [N, K] uint8 codes (or [N, K/2] for 4-bit)
+    ``scales`` [N] for per-channel, [K/block] for per-block, [1] for per-tensor
+    Returns [N, K] float32
+
+    Kept separate from the expert path because the scale layout is genuinely
+    different: experts scale along K, dense weights scale per output channel.
+    """
+    p = np.asarray(packed)
+
+    if fmt.bits == 4:
+        codes = unpack_nvfp4_codes(p).astype(np.int16)
+        vals = np.where(codes & 8, codes - 16, codes).astype(np.float32) if signed_codes \
+            else (codes & 0x0F).astype(np.float32)
+    elif fmt.bits == 8:
+        vals = p.astype(np.int8).astype(np.float32) if signed_codes else p.astype(np.float32)
+    else:
+        raise NotImplementedError(f"dequant_dense_numpy does not handle {fmt.bits}-bit")
+
+    s = _e4m3_signed_scale_or_int8(scales, signed_scales).reshape(-1)
+
+    if fmt.block == -1:                      # per output channel
+        out = vals * s[:, None]
+    elif fmt.block == 0:                     # per tensor
+        out = vals * float(s[0])
+    else:                                    # per block along K
+        rep = np.repeat(s, fmt.block)[: vals.shape[-1]]
+        out = vals * rep[None, :]
+    return out.astype(np.float32)
+
+
 def dequant_block_numpy(
     packed: np.ndarray,
     scales: np.ndarray,
@@ -55,6 +105,10 @@ def dequant_block_numpy(
 
     if fmt.name == BF16:
         return packed.astype(np.float32)
+
+    if fmt.block in (-1, 0) or fmt.bits in (4, 8) and fmt.block in (-1, 0):
+        # per-channel / per-tensor families belong on the dense path
+        return dequant_dense_numpy(packed, scales, fmt)
 
     if fmt.bits == 4:
         codes = unpack_nvfp4_codes(packed)
