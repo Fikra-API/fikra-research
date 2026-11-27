@@ -142,9 +142,13 @@ def attn_res(sources: list[torch.Tensor], query: torch.Tensor,
     a softmax over sources; output = sum w_i * x_i, optionally re-scaled by rstd
     so a source's own magnitude does not leak into the mix.
     """
-    x = torch.stack([s.float() for s in sources], 0)           # [N, D]
+    dev = sources[0].device
+    x = torch.stack([s.float().to(dev) for s in sources], 0)   # [N, D]
     stat = torch.rsqrt(x.pow(2).mean(-1) + EPS)                # [N]
-    q = query.view(-1, x.shape[-1]).float()                    # [Q, D]
+    # the queries are per-layer parameters and follow whichever card holds the
+    # layer that is asking, so they are moved to the sources rather than the
+    # sources to them
+    q = query.view(-1, x.shape[-1]).float().to(dev)            # [Q, D]
     # score of source n for query q is (q . x_n) * rstd_n; softmax over sources
     logits = (q @ x.T) * stat                                  # [Q, N]
     w = torch.softmax(logits, -1)
@@ -322,11 +326,13 @@ class InklingRunner:
                      messages: list[torch.Tensor]):
         """(1 - tanh(h F^T)) dest + tanh(h G^T) message, h = down(rms(dest,msg))."""
         c = layer.controllers[kind]
-        normed = torch.cat([rms_norm(dest.float()), rms_norm(messages[0].float())], -1)
-        h = (normed.to(torch.bfloat16) @ c["down"].T).float()
-        gain = torch.tanh(h @ c["gain"].T)
-        forget = torch.tanh(h @ c["forget"].T)
-        return (1.0 - forget) * dest.float() + gain * messages[0].float()
+        dev = dest.device
+        msg = messages[0].float().to(dev)
+        normed = torch.cat([rms_norm(dest.float()), rms_norm(msg)], -1)
+        h = (normed.to(torch.bfloat16) @ c["down"].to(dev).T).float()
+        gain = torch.tanh(h @ c["gain"].to(dev).T)
+        forget = torch.tanh(h @ c["forget"].to(dev).T)
+        return (1.0 - forget) * dest.float() + gain * msg
 
     def _moe(self, layer: LayerWeights, x: torch.Tensor) -> torch.Tensor:
         """top-8 routing and the expert MLP for one token."""
