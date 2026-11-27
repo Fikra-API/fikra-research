@@ -25,11 +25,28 @@ class LayerFootprint:
 
     ``dense_bytes`` are read once per visit and are never shared.
     ``expert_bytes`` are read once per visit for the experts a token selects.
+
+    ``dense_bits`` is the precision the dense weights are stored at. It exists
+    because measurement showed the dense half is two thirds of the traffic, so
+    quantising it moves the needle far more than any expert-side change. 16 is
+    bf16, i.e. as shipped.
     """
 
     dense_bytes: int
     expert_bytes: int
     quantised_expert_bytes: int = 0   # the part that is 4- or 8-bit
+    dense_bits: int = 16              # 16 = bf16 as shipped
+
+    def with_dense_bits(self, bits: int) -> "LayerFootprint":
+        """The same layer stored with its dense weights at ``bits``."""
+        if bits not in (4, 8, 16):
+            raise ValueError("dense_bits must be 4, 8 or 16")
+        return LayerFootprint(
+            dense_bytes=int(self.dense_bytes * bits / 16),
+            expert_bytes=self.expert_bytes,
+            quantised_expert_bytes=self.quantised_expert_bytes,
+            dense_bits=bits,
+        )
 
     @property
     def per_visit_bytes(self) -> int:

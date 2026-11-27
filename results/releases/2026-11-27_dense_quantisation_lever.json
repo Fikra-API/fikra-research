@@ -1,0 +1,39 @@
+{
+  "when": "2026-11-27",
+  "what": "The lever that actually reaches 60 tok/s: quantise the dense half",
+  "measurement": {
+    "dense_per_layer_MB": 71.2,
+    "expert_top8_per_visit_MB": 35.8,
+    "dense_share_of_a_visit_pct": 67
+  },
+  "projection_with_fusion": {
+    "dense_int16_bf16_as_shipped": {
+      "GB_per_token": 2.568,
+      "tok_s_at_64_4": 25.1,
+      "tok_s_at_154": 60.0
+    },
+    "dense_int8": {
+      "GB_per_token": 1.714,
+      "tok_s_at_64_4": 37.6,
+      "tok_s_at_154": 89.9
+    },
+    "dense_int4": {
+      "GB_per_token": 1.286,
+      "tok_s_at_64_4": 50.1,
+      "tok_s_at_154": 119.7
+    }
+  },
+  "finding": "Two thirds of the bytes moved per token are ordinary BF16 attention and MLP weights, not experts. Every optimisation today targeted the expert third. Quantising the dense half to 8 bits takes per-token traffic from 2.568 to 1.714 GB and reaches 37.6 tok/s at the bandwidth we already have, which is 1.66x Strata and 63% of the 60 tok/s goal without any further kernel work.",
+  "why_this_is_the_right_next_step": [
+    "it attacks 67% of the traffic instead of the 33% every change so far addressed",
+    "it does not require the bandwidth to double, which five attempts have failed to do",
+    "it is the standard post-training quantisation problem, so the tooling exists",
+    "it composes with fusion, which is already implemented and measured at 1.98x"
+  ],
+  "risks_stated_up_front": [
+    "quantising attention hurts quality more than quantising MLP weights, so a per-tensor choice will be needed rather than a blanket 8-bit cast",
+    "the dense path has no per-block scale format in this checkpoint, so a new Format is needed, which is what fikra.quant.Formats exists for",
+    "quality must be measured on the benchmark slice, and that infrastructure is not built yet - the earlier attempt was void because the manifest carries hashes not text"
+  ],
+  "implemented_today": "LayerFootprint.with_dense_bits(4|8|16) and five tests, including one that asserts int8 at our current bandwidth beats Strata. The planner can now compute the gain rather than assert it."
+}

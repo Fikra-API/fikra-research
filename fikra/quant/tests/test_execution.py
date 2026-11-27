@@ -183,3 +183,42 @@ def test_plan_to_arrays_matches_executor_visit_count():
     gpu_side = plan_to_arrays(ink)["visits"]
     cpu_side = execute(ink, CountingStore(), LAYER, _noop, fuse=False)["visits"]
     assert gpu_side == cpu_side == 48
+
+
+# --- dense precision -------------------------------------------------------
+
+def test_dense_bits_is_bf16_by_default():
+    fp = LayerFootprint(dense_bytes=1600, expert_bytes=400)
+    assert fp.dense_bits == 16
+    assert fp.with_dense_bits(16).dense_bytes == 1600
+
+
+def test_quantising_dense_halves_and_quarters_traffic():
+    fp = LayerFootprint(dense_bytes=1600, expert_bytes=400)
+    assert fp.with_dense_bits(8).dense_bytes == 800
+    assert fp.with_dense_bits(4).dense_bytes == 400
+
+
+def test_dense_quantisation_leaves_experts_untouched():
+    fp = LayerFootprint(dense_bytes=1600, expert_bytes=400, quantised_expert_bytes=400)
+    for bits in (4, 8, 16):
+        assert fp.with_dense_bits(bits).expert_bytes == 400
+
+
+def test_quantising_dense_raises_tok_s_on_the_real_footprint():
+    """The measured lever: dense is 2/3 of traffic, so int8 is worth ~1.5x."""
+    base = LayerFootprint(dense_bytes=int(71.2e6), expert_bytes=int(35.8e6))
+    fused = Plan.looped(24, 6, 18, 3, expert_layers=range(24), fuse_core=True)
+    bf16 = budget_for(fused, base)
+    int8 = budget_for(fused, base.with_dense_bits(8))
+    int4 = budget_for(fused, base.with_dense_bits(4))
+    assert int8.tok_s(64.4) > bf16.tok_s(64.4) * 1.4
+    assert int4.tok_s(64.4) > bf16.tok_s(64.4) * 1.9
+    # and int8 at our *current* bandwidth already beats Strata's 22.6
+    assert int8.tok_s(64.4) > 22.6
+
+
+def test_bad_dense_bits_rejected():
+    fp = LayerFootprint(dense_bytes=100, expert_bytes=10)
+    with pytest.raises(ValueError):
+        fp.with_dense_bits(3)
