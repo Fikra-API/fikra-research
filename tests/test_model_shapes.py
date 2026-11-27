@@ -36,9 +36,12 @@ def fake_weights(layers=(0, 6)):
         "model.llm.middle_cycle_cross_pass_kv_queries": _t(24, H),
         "model.llm.attn_res.output_query": _t(H),
     }
+    # attn_queries is indexed by layer - 1. A LOCAL layer has one attention input
+    # and so one query row; a GLOBAL layer has three (Q, K, V) and a (3, H) query.
     for i in range(23):
+        layer_id = i + 1
         w[f"model.llm.attn_res.attn_queries.{i}"] = (
-            _t(3, H) if i in ms.LOCAL_LAYER_IDS else _t(H))
+            _t(H) if layer_id in ms.LOCAL_LAYER_IDS else _t(3, H))
     for i in range(24):
         w[f"model.llm.attn_res.mlp_queries.{i}"] = _t(H)
     for i in layers:
@@ -113,6 +116,15 @@ def test_one_attention_step_shapes(runner):
     out = runner._attention(layer, src, 0, 0, None)
     assert out.shape == (ms.HIDDEN)
     assert torch.isfinite(out.float()).all()
+
+
+def test_attn_query_shape_follows_local_versus_global():
+    """Mirrors the checkpoint: layers 11, 17, 23 (index 10, 16, 22) are (3, H)."""
+    w = fake_weights(layers=(0, 11))
+    for idx, layer_id in ((0, 1), (10, 11), (16, 17), (22, 23)):
+        q = w[f"model.llm.attn_res.attn_queries.{idx}"]
+        want = (ms.HIDDEN,) if layer_id in ms.LOCAL_LAYER_IDS else (3, ms.HIDDEN)
+        assert tuple(q.shape) == want, (layer_id, q.shape, want)
 
 
 def test_attention_gate_is_per_element_and_sink_per_head():
