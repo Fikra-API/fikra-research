@@ -1,0 +1,29 @@
+{
+  "when": "2026-11-27",
+  "what": "Attempt to reach 154 GB/s via a 16-entry shared-table decode: NEGATIVE",
+  "hypothesis": "The kernel spends about 14 ALU ops per weight on the decode (shift, and, sign-select, a seven-deep where chain for magnitude, three multiplies). E2M1 has only sixteen values, so indexing a 16-entry table by the raw code should replace that chain with one lookup and cut instructions enough to close the 4x efficiency gap.",
+  "result": {
+    "lut_decode_GBps": 5.1,
+    "previous_arithmetic_decode_GBps": 64.4,
+    "ratio": 0.079,
+    "pct_of_154_target": 3.3,
+    "verdict": "11x WORSE, not better. The hypothesis is refuted."
+  },
+  "why_it_failed": "Triton has no indexed gather from a register or shared array. The only way to express a lookup is to compare the code against all sixteen entries and select, which builds a [BLOCK_N, BLOCK_P, 16] tensor and reduces over the last axis. That is a 16x data expansion per load, and it is exactly the pattern I removed from the expert kernel earlier today, when removing it gained 8.5x. I reintroduced the same mistake in a different place.",
+  "what_this_teaches": [
+    "On Triton, a codebook lookup is never cheaper than arithmetic unless the compiler can lower it to a real shared-memory load, which it cannot here.",
+    "The arithmeic chain is already the right implementation for this format on this toolchain: 14 ops per weight beats 16x expansion.",
+    "The 4x efficiency gap to 154 GB/s will not be closed by decode arithmetic. It has to come from moving more bytes per instruction, which means vectorised loads and more rows per program, or from not reading the weights per token at all."
+  ],
+  "next_candidates_ranked": [
+    "vectorised 128-bit loads: 4 int32 words in one transaction, which is the one lever named by the budget that has not been implemented",
+    "larger BLOCK_N with the arithmetic decode restored, since the earlier sweep showed the best tile kept shrinking as other things improved and may now be larger",
+    "the batched verify path: decode once per block and reuse across N tokens, which the numpy reference already proves and the GPU does not yet do"
+  ],
+  "state_of_the_target": {
+    "fusion": "done and measured at 1.98x",
+    "bandwidth_needed_for_60_tok_s": 154.0,
+    "bandwidth_best_measured": 64.4,
+    "position": "60 tok/s needs 2.4x more bandwidth than we have, and the two decode changes attempted today both failed: tensor cores (-7%) and the LUT (-92%)."
+  }
+}
