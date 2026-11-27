@@ -1,0 +1,48 @@
+{
+  "when": "2026-11-27",
+  "what": "Corrected end-to-end budget, and the finding that changes the plan",
+  "withdrawn": {
+    "claim": "3.43 GB per token, so 60 tok/s needs 205.8 GB/s",
+    "status": "WITHDRAWN. It double-counted expert bytes and assumed dense weights are read once for all 24 layers. Both are wrong.",
+    "why_wrong": "A looped layer visited three times reads its weights three times, because one layer is 107 MB and the T4 has 6 MB of L2, so nothing survives between passes. My earlier figure counted experts at 48 visits but dense at a single sweep of 24."
+  },
+  "corrected": {
+    "dense_per_layer_MB": 71.2,
+    "expert_top8_per_visit_MB": 35.8,
+    "per_visit_MB": 107.0,
+    "unfused": {
+      "visits": 48,
+      "GB_per_token": 5.14
+    },
+    "fused_core": {
+      "reads": 24,
+      "GB_per_token": 2.57
+    }
+  },
+  "what_this_changes": {
+    "headline": "Loop fusion alone takes us from 12.5 to 25.1 tok/s at our measured 64.4 GB/s. Strata measures 22.6. So fusion, without any further kernel work, would beat the baseline that cost a day to chase.",
+    "table_unfused_at_64_4": {
+      "tok_s": 12.5
+    },
+    "table_fused_at_64_4": {
+      "tok_s": 25.1
+    },
+    "table_fused_at_150": {
+      "tok_s": 58.4
+    },
+    "table_fused_at_205_8": {
+      "tok_s": 80.1
+    },
+    "consequence": "The 60 tok/s target does not need 205.8 GB/s. With fusion it needs about 154 GB/s, and with fusion plus the kernel at the measured dense ceiling of 243.8 it would reach 95 tok/s."
+  },
+  "what_strata_must_be_doing": {
+    "reasoning": "At 22.6 tok/s Strata consumes 2.85 GB/token at our bandwidth, 10.8 at 243.8, or 14.2 at peak. Only the first is physically consistent, so Strata is doing partial loop fusion at roughly the bandwidth we have already measured.",
+    "implication": "The gap to Strata is therefore mostly fusion, not kernel quality. Our kernel is already competitive; our execution schedule is not."
+  },
+  "priority_reorder": [
+    "1. Implement fused-core execution: keep layers 6-17 resident across their three passes. This is a planner and scheduling change, not a kernel change, and the arithmetic says it is worth 2x.",
+    "2. Then re-measure end to end, which should land near 25 tok/s and beat Strata.",
+    "3. Then push bandwidth from 64.4 toward the 243.8 ceiling for the remaining 4x."
+  ],
+  "honesty_note": "The earlier 205.8 GB/s requirement was used to justify not building the decode step. That conclusion was built on a bad number and is retracted with it."
+}
