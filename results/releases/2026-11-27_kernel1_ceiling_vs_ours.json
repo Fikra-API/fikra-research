@@ -1,0 +1,54 @@
+{
+  "when": "2026-11-27",
+  "what": "Kernel #1 pass 4: the hardware ceiling vs our kernel, measured on the same card",
+  "method": "Dense fp32 GEMV with no dequant reads a known number of bytes with the same launch pattern and reports GB/s. Persistent NVFP4 kernel loops 128, 512 and 1024 times inside one launch so DVFS sees sustained load.",
+  "dense_ceiling": {
+    "1.359_gb_in_5.78_ms": {
+      "GBps": 235.3,
+      "pct_of_320_peak": 73.5
+    },
+    "10.872_gb_in_44.59_ms": {
+      "GBps": 243.8,
+      "pct_of_320_peak": 76.2
+    }
+  },
+  "our_nvfp4_persistent": {
+    "128_steps": {
+      "GBps": 22.4,
+      "pct_peak": 7.0,
+      "per_step_ms": 1.0659
+    },
+    "512_steps": {
+      "GBps": 22.2,
+      "pct_peak": 6.9,
+      "per_step_ms": 1.0741
+    },
+    "1024_steps": {
+      "GBps": 21.7,
+      "pct_peak": 6.8,
+      "per_step_ms": 1.0993
+    }
+  },
+  "conclusion": {
+    "headline": "The card sustains 244 GB/s. Our kernel gets 22 GB/s at the same moment on the same hardware. The gap is 11x and it belongs to the kernel, not to throttling, DVFS or the machine.",
+    "why_this_settles_the_earlier_questions": "Pass 3 measured 585 MHz median and blamed throttling. That was a real observation but the wrong explanation for the bandwidth gap: a dense kernel in the same environment reaches 76% of peak, so the clock was never the limiting factor for a memory-bound kernel that is actually efficient. Persistent launches also did nothing (22.4 -> 21.7 GB/s), which rules out launch overhead and DVFS wake-up as the cause.",
+    "so_the_cause_is_in_the_kernel": "At 22 GB/s the kernel is dominated by its own work per byte: the FP4 decode and the scale decode are done per element inside the K loop, and the tile is narrow (BLOCK_N=64 with a 3D comparison-free but still scalar-heavy decode). The dense kernel proves memory can be fed fast; ours cannot consume it."
+  },
+  "measured_vs_target": {
+    "measured_now": "22.4 GB/s sustained",
+    "hardware_ceiling_measured": "243.8 GB/s",
+    "claude_target": "150 GB/s",
+    "position": "15% of target, 9% of the measured ceiling."
+  },
+  "caveats": [
+    "The clock sampler returned empty for every run, so this pass has bandwidth without clock telemetry. Pass 3's clock data stands as the last clock evidence.",
+    "The dense kernel is fp32 and coalesced; the NVFP4 kernel reads 4-bit packed data and decodes per element. Some of the 11x gap is inherent to sub-byte formats, but not all of it: a well written FP4 dequant should sit far closer to the dense number than 9%.",
+    "Single session, no cross-day repetition."
+  ],
+  "next_levers_ranked_by_expected_gain": [
+    "Decode once per 16-value scale block and reuse across a wider BLOCK_N, so the decode cost is amortised instead of per element.",
+    "Stage scales in shared memory: they are read per element today and are 1 byte per 16, so the same scale is reloaded 16x.",
+    "Load packed nibbles as 128-bit vectors (attempted in pass 2 but that run could not be trusted because of the clock noise now explained).",
+    "Raise BLOCK_N so each program streams more contiguous bytes per scale."
+  ]
+}
