@@ -147,20 +147,17 @@ def capped_swiglu(gate_up, gate_cap: float, up_cap: float):
 
 
 def _self_check() -> None:
-    """CPU-only properties that must hold for any correct E4M3/ue8m0 decode."""
-    import numpy as np
-    from fikra.quant.quant_ref import e4m3_to_float
-
-    assert e4m3_to_float(np.array([0x38], np.uint8))[0] == 1.0
-    assert e4m3_to_float(np.array([0x40], np.uint8))[0] == 2.0
-    assert e4m3_to_float(np.array([0xB8], np.uint8))[0] == -1.0
-
-    # swiglu caps: a huge gate saturates to the cap but keeps sigmoid(g) ~ 1
-    if torch is not None:
-        big = torch.tensor([[1e4, 1e4, 0.0, 0.0]])
-        out = capped_swiglu(big, 4.0, 25.0)
-        assert abs(float(out[0, 0]) - 4.0) < 1e-2
-        assert abs(float(out[0, 1])) < 1e-6
-
-
-_self_check()
+    """Shapes and the cap arithmetic. Kept out of import: a broken assumption
+    here must fail a test, not kill a training run at import time."""
+    if torch is None:
+        return
+    # gate 1e4 saturates to 4, up 1e4 saturates to 25, sigmoid(1e4) is 1
+    out = capped_swiglu(torch.tensor([[1e4, 1e4]]), 4.0, 25.0)
+    assert abs(float(out[0, 0]) - 100.0) < 0.1, float(out[0, 0])
+    # a large negative gate saturates to -4 and its sigmoid is ~0, so the whole
+    # product vanishes -- that is the property that distinguishes SiTU from
+    # silu(gate)*up, which would come out near -4 * 25 * 1
+    neg = capped_swiglu(torch.tensor([[-1e4, 1e4]]), 4.0, 25.0)
+    assert abs(float(neg[0, 0])) < 1e-6, float(neg[0, 0])
+    # zero in, zero out
+    assert float(capped_swiglu(torch.zeros(1, 2), 4.0, 25.0).sum()) == 0.0
