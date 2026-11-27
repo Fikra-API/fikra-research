@@ -117,7 +117,16 @@ def gemv_nvfp4(x, packed, scales, block: int = 16, outer_scale: float | None = N
 
 
 def quantize_e2m1(x) -> "np.ndarray":
-    """Round to nearest E2M1 magnitudes (ties to even index), for tests."""
+    """Round to nearest E2M1 magnitude, ties to the lower magnitude.
+
+    Ties go to the even (lower) index, which is what the original docstring
+    claimed but the implementation did not do: `searchsorted` plus a
+    strict `<` comparison sent every tie upward. The seven midpoints
+    (0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0) all rounded up.
+
+    Test-only helper: the kernels dequantise, they never quantise, so no
+    measured number was affected. Fixed so the oracle matches its contract.
+    """
     n = _require_numpy()
     lut = fp4_values()[:8]
     a = n.abs(n.asarray(x, n.float32))
@@ -125,6 +134,7 @@ def quantize_e2m1(x) -> "np.ndarray":
     idx = n.clip(idx, 1, 7)
     lo = lut[idx - 1]
     hi = lut[idx]
-    closer_low = (a - lo) < (hi - a)
+    # <= rather than < : a tie (a - lo == hi - a) keeps the lower index.
+    closer_low = (a - lo) <= (hi - a)
     idx = n.where(closer_low, idx - 1, idx)
     return n.sign(x) * lut[idx]

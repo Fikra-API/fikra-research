@@ -123,3 +123,46 @@ def test_mxfp8_layers_have_no_nvfp4_global_scale():
     # NVFP4 global factor there would halve the block size and rescale wrongly.
     assert 2304 // 32 == 72
     assert 2304 // 16 == 144
+
+
+def test_quantizer_rounds_ties_down_to_lower_magnitude():
+    """Contract test for the tie-breaking fixed on 2026-11-27.
+
+    The original implementation used `searchsorted` plus a strict `<`, so every
+    exact midpoint rounded UP while the docstring said ties went to the even
+    (lower) index. Seven midpoints were affected. This pins the corrected
+    behaviour so it cannot silently regress.
+    """
+    import numpy as np
+
+    from fikra.inkling_t4l4 import nvfp4
+
+    lut = np.array(nvfp4.fp4_values()[:8], dtype=np.float32)
+
+    def correct(x):
+        a = float(abs(x))
+        d = np.abs(lut - a)
+        return np.sign(x) * lut[int(np.where(d == d.min())[0][0])]
+
+    mids = [0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0]
+    for m in mids:
+        got = float(nvfp4.quantize_e2m1(np.array([m]))[0])
+        assert got == float(correct(m)), f"tie at {m} rounded to {got}"
+        # negative side must be symmetric
+        got_neg = float(nvfp4.quantize_e2m1(np.array([-m]))[0])
+        assert got_neg == -got, f"asymmetric tie at {-m}"
+
+
+def test_quantizer_matches_nearest_over_a_sweep():
+    import numpy as np
+
+    from fikra.inkling_t4l4 import nvfp4
+
+    lut = np.array(nvfp4.fp4_values()[:8], dtype=np.float32)
+    grid = np.linspace(0, 7, 701, dtype=np.float32)
+    for x in grid:
+        a = float(x)
+        d = np.abs(lut - a)
+        want = float(lut[int(np.where(d == d.min())[0][0])])
+        got = float(abs(nvfp4.quantize_e2m1(np.array([x]))[0]))
+        assert abs(got - want) < 1e-6, f"{a}: got {got} want {want}"
