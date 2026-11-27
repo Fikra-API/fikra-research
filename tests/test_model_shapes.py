@@ -214,3 +214,23 @@ def test_expert_gemv_reads_its_own_activation_row():
     # a flat vector would have given every expert 1.0
     flat = dequant_nvfp4(codes[0], scales[0].float(), outer_scale=1.0) @ x.reshape(-1)[:k]
     assert float(flat[0]) != float(got[2, 0])
+
+
+def test_streaming_experts_keeps_the_bank_on_the_host():
+    """With stream_experts the expert banks must not be pinned to the card.
+
+    One T4 is 15.6 GB and the experts are 16.7 GB of the 19.5 GB checkpoint, so
+    a single-card run only exists if the banks stay in host memory and the eight
+    selected experts are gathered per call.
+    """
+    w = fake_weights(layers=(0,))
+    r = M.InklingRunner(w, devices=("cpu",), split_layer=None, max_tokens=8,
+                        stream_experts=True)
+    layer = r.layers[0]
+    bank = layer.experts["w13"]
+    assert bank.shape[0] == ms.NUM_EXPERTS
+    # gathered slices must keep the per-expert shapes the kernel expects
+    top = torch.tensor([3, 7])
+    got = r._gather(bank, top)
+    assert got.shape == (2,) + bank.shape[1:]
+    assert torch.equal(got, bank.index_select(0, top))

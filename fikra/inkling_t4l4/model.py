@@ -198,7 +198,8 @@ class InklingRunner:
 
     def __init__(self, weights: dict, devices=("cuda:0",),
                  split_layer: int | None = None, dtype=torch.bfloat16,
-                 kv_dtype=torch.bfloat16, max_tokens: int = 4096):
+                 kv_dtype=torch.bfloat16, max_tokens: int = 4096,
+                 stream_experts: bool = False):
         """``devices`` may be one or two GPUs.
 
         With two, layers ``[0, split_layer)`` live on ``devices[0]`` and the rest
@@ -210,6 +211,11 @@ class InklingRunner:
         self.devs = [torch.device(d) for d in devices]
         self.dev = self.devs[0]
         self.split_layer = split_layer
+        # On one card the checkpoint does not fit: 19.5 GB against 15.6 GB. The
+        # experts are 16.7 GB of that and a token touches 8 of 128 per layer, so
+        # streaming them from host memory is what makes a single T4 possible at
+        # all -- not an optimisation but the entry ticket.
+        self.stream_experts = stream_experts
         self.dtype = dtype
         self.w = weights
         self.max_tokens = max_tokens
@@ -283,6 +289,11 @@ class InklingRunner:
         dev = self.dev_for(i)
         g = lambda k, d=None: (None if self.w.get(p + k, d) is None
                                else self.w.get(p + k, d).to(dev))   # noqa: E731
+        # expert banks stay where they are when streaming; they are indexed
+        # per-expert and only the selected slices move to the card
+        host = lambda k: (None if self.w.get(p + k) is None else        # noqa: E731
+                          (self.w[p + k] if self.stream_experts
+                           else self.w[p + k].to(dev)))
         local = ms.is_local(i)
         nv = i < 20
         wing = dict(
@@ -305,10 +316,10 @@ class InklingRunner:
             gate_w=g("mlp.gate.weight"), gate_b=g("mlp.gate.bias"),
             experts={
                 "fmt": "nvfp4" if nv else "mxfp8",
-                "w13": self._bytes(g("mlp.experts.w13_weight")),
-                "s13": self._bytes(g("mlp.experts.w13_weight_scale")),
-                "w2": self._bytes(g("mlp.experts.w2_weight")),
-                "s2": self._bytes(g("mlp.experts.w2_weight_scale")),
+                "w13": self._bytes(host("mlp.experts.w13_weight")),
+                "s13": self._bytes(host("mlp.experts.w13_weight_scale")),
+                "w2": self._bytes(host("mlp.experts.w2_weight")),
+                "s2": self._bytes(host("mlp.experts.w2_weight_scale")),
                 "g13": (g("mlp.experts.w13_weight_amax") / g("mlp.experts.w13_weight_outer_scale_denominator")
                         if nv else None),
                 "g2": (g("mlp.experts.w2_weight_amax") / g("mlp.experts.w2_weight_outer_scale_denominator")
@@ -359,6 +370,20 @@ class InklingRunner:
         q = self.loop_q[core_off][row]                     # [H]
         return attn_res(bank, q)
 
+    def _gather(self, t, top):
+        """The selected experts' slices, on the card, from wherever they live.
+
+        The kernel indexes expert id inside the bank, so a gathered copy has to
+        keep the bank's leading dimension: the rows are placed back at their own
+        expert ids and the rest of the bank is left as zeros. That costs a
+        128-high allocation per call at the packed size, which is why the
+        gathering below is scoped to the tensors the kernel actually reads.
+        """
+        if t is None:
+            return None
+        src = t.index_select(0, top)
+        return src.to(self.dev, non_blocking=True)
+
     def _moe(self, layer: LayerWeights, x: torch.Tensor) -> torch.Tensor:
         """top-8 routing and the expert MLP for one token."""
         e = layer.experts
@@ -369,6 +394,18 @@ class InklingRunner:
         # log-sigmoid renormalisation over the top-8, then route_scale
         lp = torch.log(torch.sigmoid(logits) + 1e-30)
         wts = torch.softmax(lp, 0) * ROUTE_SCALE
+        if self.stream_experts:
+            # gather the 8 selected experts out of the host-resident bank; the
+            # kernel takes the ids as positions into what it is given
+            e = dict(e)
+            e["w13"] = self._bytes(self._gather(e["w13"], top))
+            e["s13"] = self._bytes(self._gather(e["s13"], top))
+            e["w2"] = self._bytes(self._gather(e["w2"], top))
+            e["s2"] = self._bytes(self._gather(e["s2"], top))
+            e["g13"] = e["g13"][top].to(self.dev) if e.get("g13") is not None else None
+            e["g2"] = e["g2"][top].to(self.dev) if e.get("g2") is not None else None
+            top = torch.arange(top.numel(), device=self.dev, dtype=torch.int32)
+
         if e["fmt"] == "nvfp4":
             h = nvfp4_gemv(x.float(), e["w13"], e["s13"], top, 2 * ms.INTERMEDIATE,
                            ms.HIDDEN, global_scale=e["g13"])
