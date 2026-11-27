@@ -130,13 +130,16 @@ def attn_res(sources: list[torch.Tensor], query: torch.Tensor,
     a softmax over sources; output = sum w_i * x_i, optionally re-scaled by rstd
     so a source's own magnitude does not leak into the mix.
     """
-    x = torch.stack(sources, 0).float()                        # [N, T, D]
-    stat = torch.rsqrt(x.pow(2).mean(-1) + EPS)                # [N, T]
-    logits = (x * query.view(1, 1, -1)).sum(-1) * stat          # [N, T]
-    w = torch.softmax(logits, dim=0)
+    x = torch.stack([s.float() for s in sources], 0)           # [N, D]
+    stat = torch.rsqrt(x.pow(2).mean(-1) + EPS)                # [N]
+    q = query.view(-1, x.shape[-1]).float()                    # [Q, D]
+    # score of source n for query q is (q . x_n) * rstd_n; softmax over sources
+    logits = (q @ x.T) * stat                                  # [Q, N]
+    w = torch.softmax(logits, -1)
     if normalize_values:
         w = w * stat
-    return (w.unsqueeze(-1) * x).sum(0)
+    out = w @ x                                                # [Q, D]
+    return out if out.shape[0] > 1 else out[0]
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +437,7 @@ class InklingRunner:
         else:
             q = self.attn_queries[layer.layer - 1]
             src = attn_res(blocks + [partial], q)
-            src = (src,) if layer.local else (src, src, src)
+            src = (src,) if layer.local else tuple(src)
         if messages is not None:
             messages = {k: v.to(dev) for k, v in messages.items()}
             dest = torch.stack([s.float() for s in src], 0)
