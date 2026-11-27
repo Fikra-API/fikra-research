@@ -194,13 +194,18 @@ class InklingRunner:
         self.w = weights
         self.max_tokens = max_tokens
         self.layers = [self._layer(i) for i in range(ms.NUM_LAYERS)]
-        self.attn_queries = [weights[f"model.llm.attn_res.attn_queries.{i}"] for i in range(1, 24)]
-        self.mlp_queries = [weights[f"model.llm.attn_res.mlp_queries.{i}"] for i in range(24)]
-        self.output_query = weights["model.llm.attn_res.output_query"]
-        self.embed = weights["model.llm.embed.weight"]
-        self.embed_norm = weights["model.llm.embed_norm.weight"]
-        self.final_norm = weights["model.llm.norm.weight"]
-        self.unembed = weights["model.llm.unembed.weight"]
+        # attn_queries is indexed by layer - 1: the first layer has no attention
+        # input to mix, so the checkpoint stores 23 entries for 24 layers.
+        self.attn_queries = [weights[f"model.llm.attn_res.attn_queries.{i}"].to(self.dev)
+                             for i in range(23)]
+        self.mlp_queries = [weights[f"model.llm.attn_res.mlp_queries.{i}"].to(self.dev)
+                            for i in range(24)]
+        self.output_query = weights["model.llm.attn_res.output_query"].to(self.dev)
+        self.embed = weights["model.llm.embed.weight"].to(self.dev)
+        self.embed_norm = weights["model.llm.embed_norm.weight"].to(self.dev)
+        self.final_norm = weights["model.llm.norm.weight"].to(self.dev)
+        # the unembedding lives with the coda layers, on the last card
+        self.unembed = weights["model.llm.unembed.weight"].to(self.devs[-1])
         self.cross_pass_q = weights["model.llm.middle_cycle_cross_pass_queries"].to(self.dev)
         self.cross_pass_kv_q = weights["model.llm.middle_cycle_cross_pass_kv_queries"].to(self.dev)
 
@@ -389,6 +394,13 @@ class InklingRunner:
     # -- one layer visit --------------------------------------------------
     def _visit(self, layer: LayerWeights, state: dict, pos: int, slot: int,
                messages: list[torch.Tensor] | None, cross_kv: torch.Tensor | None):
+        # The residual stream follows the layer that is about to read it. On a
+        # two-card split this is one 4.6 KB copy per crossing, which is noise;
+        # keeping the weights where they are is what matters.
+        dev = self.dev_for(layer.layer)
+        if len(self.devs) > 1:
+            state["partial"] = state["partial"].to(dev)
+            state["blocks"] = [b.to(dev) for b in state["blocks"]]
         blocks = state["blocks"]
         partial = state["partial"]
         is_boundary = layer.layer % 6 == 0
