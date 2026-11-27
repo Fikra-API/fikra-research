@@ -1,0 +1,37 @@
+{
+  "when": "2026-11-27",
+  "what": "Analytic end-to-end budget from real checkpoint shapes, before writing any decode code",
+  "why_first": "Wiring a full decode step is days of work. This calculation says whether it can pay off, using byte counts read from the actual safetensors header and the bandwidth we have measured, so the decision is not a guess.",
+  "per_token_bytes": {
+    "expert_top8_per_visit_MB": 35.8,
+    "visits": 48,
+    "expert_total_GB": 1.72,
+    "dense_per_layer_MB": 71.2,
+    "dense_layers": 24,
+    "dense_total_GB": 1.71,
+    "total_GB_per_token": 3.43
+  },
+  "dense_weight_inventory_finding": {
+    "fact": "Each layer carries 71.2 MB of BF16 weights, and 1.71 GB of a 3.43 GB per-token read is dense attention and MLP, not experts. The experts are only 0.573 GB in total because they are 4-bit.",
+    "includes_unexpected_module": "There is an extra BF16 MLP per layer (c_fc 4096x1024, c_proj 1024x4096, 16.8 MB) whose role the config does not name. It is counted as read-per-layer because that is what its shape implies, but this needs confirming before it goes into a paper.",
+    "implication": "Any plan that focuses on the experts alone is optimising 50% of the traffic. Half the per-token bytes are ordinary BF16 matmuls."
+  },
+  "projected_tok_s": {
+    "our_kernel_measured_46.8_GBps": 13.6,
+    "dense_ceiling_measured_243.8_GBps": 71.1,
+    "hardware_peak_320_GBps": 93.3,
+    "strata_measured": 22.6
+  },
+  "bandwidth_needed": {
+    "to_match_strata_22.6_tok_s": 77.5,
+    "to_double_strata": 155.0,
+    "to_hit_60_tok_s": 205.8
+  },
+  "conclusions": [
+    "60 tok/s on a T4 needs 205.8 GB/s sustained, i.e. 64% of hardware peak, and our measured achievable ceiling on this card is 243.8 GB/s. It is arithmetically possible and leaves almost no margin for inefficiency.",
+    "The 150 GB/s target is not enough for 60 tok/s: it yields 43.7. The target should be restated as a tok/s figure, not a bandwidth figure.",
+    "Our kernel at 46.8 GB/s would give 13.6 tok/s, less than Strata's 22.6. So the kernel is not yet good enough to beat the baseline end to end, even though its scaling shape is better.",
+    "Matching Strata only needs 77.5 GB/s, which is 1.65x our current kernel and 32% of the measured ceiling. That is the realistic near-term goal."
+  ],
+  "recommendation": "Target 78 GB/s for parity and 155 for a credible win. Do not build the full decode step until the kernel clears ~78, because a full decode at 13.6 tok/s would be slower than the baseline it is meant to beat, and that result would not be worth the days of work."
+}
