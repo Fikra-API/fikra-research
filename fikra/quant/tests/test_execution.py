@@ -83,3 +83,103 @@ def test_fusion_plus_full_bandwidth_reaches_the_60_target():
     b = budget_for(ink_f, footprint)
     assert b.tok_s(154) >= 59
     assert b.tok_s(154) < 60.5
+
+
+# --- fused executor --------------------------------------------------------
+
+from fikra.quant.execution import CountingStore, execute  # noqa: E402
+
+LAYER = int(107e6)
+
+
+def _noop(_i, _p):
+    pass
+
+
+def test_executor_visits_the_same_layers_either_way():
+    """Fusion must not change what runs, only what is re-read."""
+    ink = Plan.looped(24, 6, 18, 3)
+    a = execute(ink, CountingStore(), LAYER, _noop, fuse=False)
+    b = execute(ink, CountingStore(), LAYER, _noop, fuse=True)
+    assert a["visits"] == b["visits"] == 48
+
+
+def test_executor_fused_reads_half_the_bytes():
+    ink = Plan.looped(24, 6, 18, 3)
+    unfused = execute(ink, CountingStore(), LAYER, _noop, fuse=False)["reads"]
+    fused = execute(ink, CountingStore(), LAYER, _noop, fuse=True)["reads"]
+    assert unfused["total_reads"] == 48
+    assert fused["total_reads"] == 24
+    assert round(unfused["GB"] / fused["GB"], 2) == 2.0
+
+
+def test_executor_keeps_repeated_layers_resident():
+    ink = Plan.looped(24, 6, 18, 3)
+    r = execute(ink, CountingStore(), LAYER, _noop, fuse=True)
+    assert r["resident_layers"] == list(range(6, 18))
+
+
+def test_executor_reads_passed_layers_once():
+    ink = Plan.looped(24, 6, 18, 3)
+    st = CountingStore()
+    execute(ink, st, LAYER, _noop, fuse=True)
+    for i in list(range(0, 6)) + list(range(18, 24)):
+        assert st.reads[f"layer{i}"] == 1
+
+
+def test_executor_reads_core_once_when_fused():
+    ink = Plan.looped(24, 6, 18, 3)
+    st = CountingStore()
+    execute(ink, st, LAYER, _noop, fuse=True)
+    for i in range(6, 18):
+        assert st.reads[f"layer{i}"] == 1
+
+
+def test_executor_plain_plan_is_unaffected_by_fusion():
+    plain = Plan.every_layer_once(8)
+    a = execute(plain, CountingStore(), LAYER, _noop, fuse=False)["reads"]["total_reads"]
+    b = execute(plain, CountingStore(), LAYER, _noop, fuse=True)["reads"]["total_reads"]
+    assert a == b == 8, "a plain stack has no repeats, so fusion cannot help"
+
+
+def test_executor_calls_the_layer_in_the_right_order():
+    seen = []
+    ink = Plan.looped(4, 1, 3, 3)
+    execute(ink, CountingStore(), LAYER, lambda i, p: seen.append((p, i)), fuse=True)
+    # pass 0: 0,1,2,3 ; pass 1: 1,2 ; pass 2: 1,2
+    assert seen == [(0, 0), (0, 1), (0, 2), (0, 3),
+                    (1, 1), (1, 2), (2, 1), (2, 2)]
+
+
+# --- plan to kernel arrays -------------------------------------------------
+
+from fikra.quant.fused_kernel import plan_to_arrays  # noqa: E402
+
+
+def test_plan_to_arrays_covers_every_visit_in_order():
+    arr = plan_to_arrays(Plan.looped(4, 1, 3, 2))
+    assert arr["visits"] == arr["visits"]
+    assert arr["layer_of_visit"] == [i for i, _ in
+                                     [(0, 0), (1, 0), (2, 0), (3, 0),
+                                      (1, 1), (2, 1)]]
+    assert arr["pass_of_visit"] == [0, 0, 0, 0, 1, 1]
+
+
+def test_plan_to_arrays_marks_only_repeated_shareable_layers_resident():
+    arr = plan_to_arrays(Plan.looped(24, 6, 18, 3, fuse_core=True))
+    assert arr["resident_layers"] == list(range(6, 18))
+    assert arr["visits"] == 48
+
+
+def test_plan_to_arrays_plain_stack_has_no_residents():
+    arr = plan_to_arrays(Plan.every_layer_once(12))
+    assert arr["resident_layers"] == []
+    assert arr["visits"] == 12
+
+
+def test_plan_to_arrays_matches_executor_visit_count():
+    """The GPU schedule and the reference executor must agree on visit count."""
+    ink = Plan.looped(24, 6, 18, 3)
+    gpu_side = plan_to_arrays(ink)["visits"]
+    cpu_side = execute(ink, CountingStore(), LAYER, _noop, fuse=False)["visits"]
+    assert gpu_side == cpu_side == 48

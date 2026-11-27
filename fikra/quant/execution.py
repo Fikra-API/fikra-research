@@ -89,3 +89,66 @@ def compare(plan_unfused: Plan, plan_fused: Plan, footprint: LayerFootprint,
                   "tok_s": {f"{b:g}": round(bf.tok_s(b), 1) for b in bandwidths}},
         "speedup_from_fusion": round(bu.bytes_per_token / bf.bytes_per_token, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# Fused execution
+# ---------------------------------------------------------------------------
+
+class CountingStore:
+    """A weight store that counts bytes actually read.
+
+    Fusion's entire claim is that a layer read once and reused across passes
+    moves fewer bytes than the same layer read three times. That claim is only
+    verifiable if reads are counted, so the reference executor does exactly that
+    rather than asserting the saving.
+    """
+
+    def __init__(self):
+        self.reads: dict[str, int] = {}
+        self.total_bytes = 0
+
+    def read(self, name: str, size: int) -> str:
+        self.reads[name] = self.reads.get(name, 0) + 1
+        self.total_bytes += size
+        return name
+
+    def report(self) -> dict:
+        return {"distinct": len(self.reads), "total_reads": sum(self.reads.values()),
+                "total_bytes": self.total_bytes,
+                "GB": round(self.total_bytes / 1e9, 3),
+                "hot": sorted(self.reads.items(), key=lambda kv: -kv[1])[:3]}
+
+
+def execute(plan, store: CountingStore, layer_size: int, layer_fn,
+            fuse: bool = False) -> dict:
+    """Run every layer visit in plan order, honouring fusion.
+
+    ``layer_fn(layer_index, pass_index)`` does the layer's work and is where a
+    real kernel goes. Fusion changes only whether the weights are read again on
+    later passes: with ``fuse`` the layer's weights are read on pass 0 and reused
+    for the remaining passes, which is what a resident-block scheduler does.
+
+    Note this is the reference executor, not a GPU scheduler. It makes the byte
+    accounting exact so a GPU implementation can be checked against it.
+    """
+    resident: set[int] = set()
+    visits = 0
+    max_passes = max((l.passes for l in plan.layers), default=1)
+    for pass_index in range(max_passes):
+        for layer in plan.layers:
+            if pass_index >= layer.passes:
+                continue
+            visits += 1
+            # A layer is reusable if it runs more than once. The plan can state
+            # this itself (share_weights_across_passes), but the executor also
+            # honours the caller's fuse flag, so the same plan can be measured
+            # both ways, which is how the 2x is demonstrated rather than assumed.
+            reusable = layer.passes > 1
+            reuse = fuse and reusable and pass_index > 0
+            if not reuse:
+                store.read(f"layer{layer.index}", layer_size)
+                if fuse and reusable:
+                    resident.add(layer.index)
+            layer_fn(layer.index, pass_index)
+    return {"visits": visits, "resident_layers": sorted(resident), "reads": store.report()}

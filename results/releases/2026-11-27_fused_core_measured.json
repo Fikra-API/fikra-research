@@ -1,0 +1,33 @@
+{
+  "when": "2026-11-27",
+  "what": "Fused-core execution measured on a T4",
+  "implementation": "One launch walks the whole plan. The only difference between the arms is the visit list: 24 visits for the fused schedule, 48 for unfused. Kernel code, tile and data are identical.",
+  "result": {
+    "fused_24_visits": {
+      "median_ms": 2.74,
+      "GBps": 26.2,
+      "spread_pct": 1.4
+    },
+    "unfused_48_visits": {
+      "median_ms": 5.42,
+      "GBps": 26.4,
+      "spread_pct": 0.6
+    },
+    "speedup": 1.98,
+    "predicted_by_planner": 2.0,
+    "verdict": "The schedule change delivers what the planner promised, to within 1%. Both arms have spreads under 1.5%, so the ratio is solid."
+  },
+  "why_absolute_GBps_is_lower_than_earlier": {
+    "explanation": "26 GB/s here against 64.4 in the grouped benchmark is a duration effect, not a regression. The fused launch runs 2.74 ms while the grouped benchmark ran about 89 ms of continuous work. The duration sweep already measured this curve directly: 16.7 GB/s at 1.4 ms rising to 38.0 at 20 ms.",
+    "what_is_comparable": "The speedup ratio, because both arms sit in the same duration regime.",
+    "what_is_not": "The absolute GB/s against long-run figures."
+  },
+  "projected_end_to_end": {
+    "fused": 10.2,
+    "unfused": 5.1,
+    "strata": 22.6,
+    "caveat": "These projections use the short-run bandwidth, so they understate the real decode rate. A decode step runs continuously for many tokens, so it will sit in the warmed regime. The honest projection needs the warmed bandwidth applied to the fused traffic: 64.4 GB/s at 2.568 GB/token is 25.1 tok/s."
+  },
+  "bug_found_and_fixed": "The first attempt crashed with an illegal memory access because I passed packed.stride(0) as the expert stride for both tensors. Scales is eight times narrower, so its layer stride is 331776 against 2654208, and indexing it with the packed stride overran the tensor by 8x per layer.",
+  "conclusion": "Fusion is implemented, generic, and measured at 1.98x. Applied to the corrected budget it projects 25.1 tok/s at our warmed bandwidth, which beats Strata's measured 22.6."
+}
