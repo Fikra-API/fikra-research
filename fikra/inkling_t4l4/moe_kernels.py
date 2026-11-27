@@ -111,17 +111,26 @@ def mxfp8_gemv(x, codes, scales, experts, n, k):
     x [K] fp32, experts [topk] int32. Returns [topk, N] fp32.
     """
     if triton is not None and x.is_cuda:
-        out = torch.zeros((experts.numel(), n), dtype=torch.float32, device=x.device)
-        grid = (triton.cdiv(n, 16), experts.numel())
-        _mxfp8_gemv_kernel[grid](
-            x.contiguous(), codes.contiguous(), scales.contiguous(), out,
-            experts.to(torch.int32),
-            n, k, codes.stride(0), codes.stride(1),
-            scales.stride(0), scales.stride(1),
-            BLOCK_N=16, BLOCK_K=256, SCALE_BLOCK=MXFP8_BLOCK,
-            X_2D=(x.dim() == 2), num_warps=4,
-        )
-        return out
+        # Triton launches on torch's CURRENT device, not the tensors'. With a
+        # layer split over two cards a cuda:1 kernel launched on cuda:0 indexes
+        # cuda:1 pointers: illegal access, and the error surfaces one call later
+        # as CUBLAS_STATUS_EXECUTION_FAILED.
+        with torch.cuda.device(x.device):
+            if codes.dtype != torch.uint8:
+                codes = codes.view(torch.uint8)
+            if scales.dtype != torch.uint8:
+                scales = scales.view(torch.uint8)
+            out = torch.zeros((experts.numel(), n), dtype=torch.float32, device=x.device)
+            grid = (triton.cdiv(n, 16), experts.numel())
+            _mxfp8_gemv_kernel[grid](
+                x.contiguous(), codes.contiguous(), scales.contiguous(), out,
+                experts.to(torch.int32),
+                n, k, codes.stride(0), codes.stride(1),
+                scales.stride(0), scales.stride(1),
+                BLOCK_N=16, BLOCK_K=256, SCALE_BLOCK=MXFP8_BLOCK,
+                X_2D=(x.dim() == 2), num_warps=4,
+            )
+            return out
 
     import numpy as np
     from .nvfp4 import dequant_mxfp8

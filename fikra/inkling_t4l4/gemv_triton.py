@@ -125,26 +125,27 @@ def nvfp4_gemv(x: torch.Tensor, packed: torch.Tensor, scales: torch.Tensor,
     real checkpoint result without it is wrong.
     """
     if triton is not None and x.is_cuda:
-        # The scales arrive as raw E4M3 bytes. A float8 tensor cannot even be
-        # handed to Triton on sm75, so reinterpret before it crosses.
-        if scales.dtype != torch.uint8:
-            scales = scales.view(torch.uint8)
-        if packed.dtype != torch.uint8:
-            packed = packed.view(torch.uint8)
-        out = torch.zeros((experts.numel(), n), dtype=torch.float32, device=x.device)
-        if global_scale is None:
-            global_scale = torch.ones(packed.shape[0], dtype=torch.float32, device=x.device)
-        grid = (triton.cdiv(n, BLOCK_N), experts.numel())
-        if not (packed.is_contiguous() and scales.is_contiguous()):
-            packed = packed.contiguous()
-            scales = scales.contiguous()
-        _nvfp4_gemv_kernel[grid](
-            x.contiguous(), packed, scales, out,
-            experts.to(torch.int32), global_scale.contiguous(),
-            n, k, packed.stride(0), packed.stride(1), scales.stride(0), scales.stride(1),
-            BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, X_2D=(x.dim() == 2), num_warps=NUM_WARPS,
-        )
-        return out
+        with torch.cuda.device(x.device):
+            # The scales arrive as raw E4M3 bytes. A float8 tensor cannot even be
+            # handed to Triton on sm75, so reinterpret before it crosses.
+            if scales.dtype != torch.uint8:
+                scales = scales.view(torch.uint8)
+            if packed.dtype != torch.uint8:
+                packed = packed.view(torch.uint8)
+            out = torch.zeros((experts.numel(), n), dtype=torch.float32, device=x.device)
+            if global_scale is None:
+                global_scale = torch.ones(packed.shape[0], dtype=torch.float32, device=x.device)
+            grid = (triton.cdiv(n, BLOCK_N), experts.numel())
+            if not (packed.is_contiguous() and scales.is_contiguous()):
+                packed = packed.contiguous()
+                scales = scales.contiguous()
+            _nvfp4_gemv_kernel[grid](
+                x.contiguous(), packed, scales, out,
+                experts.to(torch.int32), global_scale.contiguous(),
+                n, k, packed.stride(0), packed.stride(1), scales.stride(0), scales.stride(1),
+                BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, X_2D=(x.dim() == 2), num_warps=NUM_WARPS,
+            )
+            return out
     from .gemv_torch import dequant_nvfp4
     x2 = x if x.dim() == 2 else x.unsqueeze(0).expand(experts.numel(), -1)
     rows = []
@@ -250,21 +251,22 @@ def nvfp4_gemm_batched(x, packed, scales, experts, n, k, t,
     compared against the same arithmetic the kernel implements.
     """
     if triton is not None and x.is_cuda:
-        out = torch.zeros((experts.numel(), t, n), dtype=torch.float32, device=x.device)
-        if global_scale is None:
-            global_scale = torch.ones(packed.shape[0], dtype=torch.float32, device=x.device)
-        tm = 1
-        while tm < t:
-            tm *= 2
-        tm = max(tm, 2)
-        grid = (triton.cdiv(n, BLOCK_N), experts.numel())
-        _BATCHED[grid](
-            x.contiguous(), packed.contiguous(), scales.contiguous(), out,
-            experts.to(torch.int32), global_scale.contiguous(),
-            n, k, t, packed.stride(0), packed.stride(1), scales.stride(0), scales.stride(1),
-            BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, T_MAX=tm, num_warps=NUM_WARPS,
-        )
-        return out
+        with torch.cuda.device(x.device):
+            out = torch.zeros((experts.numel(), t, n), dtype=torch.float32, device=x.device)
+            if global_scale is None:
+                global_scale = torch.ones(packed.shape[0], dtype=torch.float32, device=x.device)
+            tm = 1
+            while tm < t:
+                tm *= 2
+            tm = max(tm, 2)
+            grid = (triton.cdiv(n, BLOCK_N), experts.numel())
+            _BATCHED[grid](
+                x.contiguous(), packed.contiguous(), scales.contiguous(), out,
+                experts.to(torch.int32), global_scale.contiguous(),
+                n, k, t, packed.stride(0), packed.stride(1), scales.stride(0), scales.stride(1),
+                BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, T_MAX=tm, num_warps=NUM_WARPS,
+            )
+            return out
     from .gemv_torch import dequant_nvfp4
     rows = []
     for e in experts.tolist():
