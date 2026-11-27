@@ -61,7 +61,7 @@ if triton is not None:
 
     @triton.jit
     def _nvfp4_gemv_kernel(
-        X,                 # fp32 [K]
+        X,                 # fp32 [K] or [topk, K]
         PACKED,            # uint8 [E, N, K/2]
         SCALES,            # fp8   [E, N, K/16]
         OUT,               # fp32 [topk, N]
@@ -72,6 +72,7 @@ if triton is not None:
         stride_se, stride_sn,
         BLOCK_N: tl.constexpr,
         BLOCK_K: tl.constexpr,
+        X_2D: tl.constexpr,
     ):
         pid_n = tl.program_id(0)   # column tile
         pid_e = tl.program_id(1)   # slot in the top-k list
@@ -79,6 +80,8 @@ if triton is not None:
         gscale = tl.load(GLOBAL_SCALE + expert)
         offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
         n_mask = offs_n < N
+        # per-expert activation row when X is 2-D
+        x_row = X + (pid_e * K if X_2D else 0)
 
         # E2M1 magnitudes 0,0.5,1,1.5,2,3,4,6 for codes 0..7; low 3 bits index
         # the table, bit 3 is the sign (two's-complement negate of the magnitude).
@@ -104,7 +107,7 @@ if triton is not None:
             w = tl.sum(tl.where(codes[:, :, None] == code[None, None, :],
                                 fp4_table[None, None, :], 0.0), axis=2)
             w = w * sc * gscale
-            x = tl.load(X + offs_k, mask=k_mask, other=0.0)
+            x = tl.load(x_row + offs_k, mask=k_mask, other=0.0)
             acc += tl.sum(w * x[None, :], axis=1)
         tl.store(OUT + pid_e * N + offs_n, acc, mask=n_mask)
 
@@ -132,20 +135,24 @@ def nvfp4_gemv(x: torch.Tensor, packed: torch.Tensor, scales: torch.Tensor,
         if global_scale is None:
             global_scale = torch.ones(packed.shape[0], dtype=torch.float32, device=x.device)
         grid = (triton.cdiv(n, BLOCK_N), experts.numel())
+        if not (packed.is_contiguous() and scales.is_contiguous()):
+            packed = packed.contiguous()
+            scales = scales.contiguous()
         _nvfp4_gemv_kernel[grid](
-            x.contiguous(), packed.contiguous(), scales.contiguous(), out,
+            x.contiguous(), packed, scales, out,
             experts.to(torch.int32), global_scale.contiguous(),
             n, k, packed.stride(0), packed.stride(1), scales.stride(0), scales.stride(1),
-            BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, num_warps=NUM_WARPS,
+            BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K, X_2D=(x.dim() == 2), num_warps=NUM_WARPS,
         )
         return out
     from .gemv_torch import dequant_nvfp4
+    x2 = x if x.dim() == 2 else x.unsqueeze(0).expand(experts.numel(), -1)
     rows = []
     for slot, e in enumerate(experts.tolist()):
         # Bank rows are [N, K//2] and [N, K//16]: the transposed reference layout.
         g = None if global_scale is None else float(global_scale[e])
         w = dequant_nvfp4(packed[e], scales[e].to(torch.float32), outer_scale=g)
-        rows.append(w @ x.to(torch.float32))
+        rows.append(w @ x2[slot].to(torch.float32))
     return torch.stack(rows) if rows else torch.zeros((0, n))
 
 

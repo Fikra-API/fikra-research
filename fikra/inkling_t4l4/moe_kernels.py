@@ -44,7 +44,7 @@ if triton is not None:
 
     @triton.jit
     def _mxfp8_gemv_kernel(
-        X,                  # fp32 [K]
+        X,                  # fp32 [K] or [topk, K]
         CODES,              # fp8 e4m3 uint8 [E, N, K]
         SCALES,             # uint8 ue8m0 [E, N, K/32] (one exponent per 32 K, per row)
         OUT,                # fp32 [topk, N]
@@ -55,6 +55,7 @@ if triton is not None:
         BLOCK_N: tl.constexpr,
         BLOCK_K: tl.constexpr,
         SCALE_BLOCK: tl.constexpr,
+        X_2D: tl.constexpr,
     ):
         """y[n] = sum_k e4m3(codes[n,k]) * 2**(scale[n//32, k//32] - 127) * x[k].
 
@@ -67,6 +68,7 @@ if triton is not None:
         expert = tl.load(EXPERTS + pid_e)
         offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
         n_mask = offs_n < N
+        x_row = X + (pid_e * K if X_2D else 0)
 
         acc = tl.zeros([BLOCK_N], tl.float32)
         for k0 in range(0, K, BLOCK_K):
@@ -82,7 +84,7 @@ if triton is not None:
                          mask=n_mask[:, None] & k_mask[None, :], other=127)
             w = w * tl.exp2((sb.to(tl.float32) - 127.0))
 
-            x = tl.load(X + offs_k, mask=k_mask, other=0.0)
+            x = tl.load(x_row + offs_k, mask=k_mask, other=0.0)
             acc += tl.sum(w * x[None, :], axis=1)
         tl.store(OUT + pid_e * N + offs_n, acc, mask=n_mask)
 
@@ -116,17 +118,19 @@ def mxfp8_gemv(x, codes, scales, experts, n, k):
             experts.to(torch.int32),
             n, k, codes.stride(0), codes.stride(1),
             scales.stride(0), scales.stride(1),
-            BLOCK_N=16, BLOCK_K=256, SCALE_BLOCK=MXFP8_BLOCK, num_warps=4,
+            BLOCK_N=16, BLOCK_K=256, SCALE_BLOCK=MXFP8_BLOCK,
+            X_2D=(x.dim() == 2), num_warps=4,
         )
         return out
 
     import numpy as np
     from .nvfp4 import dequant_mxfp8
 
+    x2 = x if x.dim() == 2 else x.unsqueeze(0).expand(experts.numel(), -1)
     rows = []
-    for e in experts.tolist():
+    for slot, e in enumerate(experts.tolist()):
         w = dequant_mxfp8(codes[e].cpu().numpy(), scales[e].cpu().numpy(), MXFP8_BLOCK)
-        rows.append(w @ x.cpu().numpy().astype(np.float32))
+        rows.append(w @ x2[slot].cpu().numpy().astype(np.float32))
     return torch.tensor(np.stack(rows), dtype=torch.float32) if rows else torch.zeros((0, n))
 
 

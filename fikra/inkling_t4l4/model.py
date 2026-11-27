@@ -348,12 +348,14 @@ class InklingRunner:
             h = nvfp4_gemv(x.float(), e["w13"], e["s13"], top, 2 * ms.INTERMEDIATE,
                            ms.HIDDEN, global_scale=e["g13"])
             act = capped_swiglu(h, GATE_CAP, UP_CAP)                    # [8, I]
-            y = nvfp4_gemv(act.reshape(-1).float(), e["w2"], e["s2"], top, ms.HIDDEN,
+            # each expert's down projection reads ITS OWN activation row; passing
+            # act.reshape(-1) gave every expert expert 0's data
+            y = nvfp4_gemv(act.float(), e["w2"], e["s2"], top, ms.HIDDEN,
                            ms.INTERMEDIATE, global_scale=e["g2"])
             return (wts[:, None] * y).sum(0).to(self.dtype)
         h = mxfp8_gemv(x.float(), e["w13"], e["s13"], top, 2 * ms.INTERMEDIATE, ms.HIDDEN)
         act = capped_swiglu(h, GATE_CAP, UP_CAP)
-        y = mxfp8_gemv(act.reshape(-1).float(), e["w2"], e["s2"], top, ms.HIDDEN, ms.INTERMEDIATE)
+        y = mxfp8_gemv(act.float(), e["w2"], e["s2"], top, ms.HIDDEN, ms.INTERMEDIATE)
         return (wts[:, None] * y).sum(0).to(self.dtype)
 
     # -- attention -------------------------------------------------------
