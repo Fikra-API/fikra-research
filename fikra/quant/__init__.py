@@ -18,6 +18,7 @@ shared.
 """
 from .formats import Format, NVFP4, MXFP8, FP8_E4M3_BLOCK, BF16, get_format
 from .plans import LayerPlan, Plan
+from .execution import LayerFootprint, Budget, budget_for, compare
 from .quant_ref import (
     dequant_block_numpy, quantized_gemv_numpy, e4m3_to_float, e2m1_code_values,
 )
@@ -25,5 +26,6 @@ from .quant_ref import (
 __all__ = [
     "Format", "NVFP4", "MXFP8", "FP8_E4M3_BLOCK", "BF16", "get_format",
     "LayerPlan", "Plan",
+    "LayerFootprint", "Budget", "budget_for", "compare",
     "dequant_block_numpy", "quantized_gemv_numpy", "e4m3_to_float", "e2m1_code_values",
 ]
