@@ -97,7 +97,7 @@ def short_conv(x: torch.Tensor, w: torch.Tensor, cache: torch.Tensor,
     residual tap counted as a weight, which is what the reference kernel does.
     """
     d = x.shape[-1]
-    width = w.shape[-1]
+    width = min(w.shape[-1], cache.shape[0] + 1)
     cur = x
     taps = []
     for lag in range(width - 1, -1, -1):
@@ -113,7 +113,8 @@ def short_conv(x: torch.Tensor, w: torch.Tensor, cache: torch.Tensor,
     for tap, value in enumerate(taps):
         wt = w[:, 0, tap].to(torch.float32)
         if dynamic is not None:
-            wt = wt + dynamic[:, tap].repeat_interleave(d // dynamic.shape[0])
+            heads = dynamic.shape[0]
+            wt = wt + dynamic[:, tap].repeat_interleave(d // heads)
         term = value.to(torch.float32) * wt
         acc = term if acc is None else acc + term
     acc = acc + cur.to(torch.float32)
@@ -327,7 +328,7 @@ class InklingRunner:
     def _attention(self, layer: LayerWeights, src: tuple[torch.Tensor, ...],
                    pos: int, slot: int, dynamic_kv: torch.Tensor | None):
         """One decode step of attention for one layer visit."""
-        d = self.dev
+        dev = layer.wq_du.device
         # The three attention inputs are each RMS-normalised, and a local layer
         # has one norm for all three while a global layer has one per stream.
         if layer.local:
@@ -342,12 +343,17 @@ class InklingRunner:
         vv = (layer.wv_dv.to(self.dtype) @ v_in)               # 1024
         r = (layer.wr_du.to(self.dtype) @ q_in)                # 384
         gate = (layer.gate_attn.to(self.dtype) @ q_in)         # 3072
-        sink = (layer.sink.to(self.dtype) @ q_in)              # 24
+        sink = (layer.sink.to(self.dtype) @ q_in)              # [24] one per head
 
-        k = short_conv(kv, layer.k_sconv, self.conv_kv[slot][0],
-                       None if layer.local else dynamic_kv)
-        v = short_conv(vv, layer.v_sconv, self.conv_kv[slot][1],
-                       None if layer.local else dynamic_kv)
+        dyn_k = dyn_v = None
+        if not layer.local and layer.k_sconv_dyn is not None:
+            # weight_proj is [heads * taps, hidden] and produces a per-head,
+            # per-tap offset on top of the static four taps
+            dk = (layer.k_sconv_dyn.to(self.dtype) @ k_in).float().view(ms.NUM_KV_HEADS, -1)
+            dv = (layer.v_sconv_dyn.to(self.dtype) @ v_in).float().view(ms.NUM_KV_HEADS, -1)
+            dyn_k, dyn_v = dk, dv
+        k = short_conv(kv, layer.k_sconv, self.conv_kv[slot][0], dyn_k)
+        v = short_conv(vv, layer.v_sconv, self.conv_kv[slot][1], dyn_v)
 
         # punt on the tau log-scaling below 8192 positions; it is exactly 1.0 there
         tau = None
@@ -361,33 +367,37 @@ class InklingRunner:
         k = l2_clip(k.view(ms.NUM_KV_HEADS, ms.HEAD_DIM), L2_THRESHOLD, None)
         v = rms_norm(v.view(ms.NUM_KV_HEADS, ms.HEAD_DIM))
         r = l2_clip(r.view(ms.NUM_HEADS, 16), REL_L2_THRESHOLD, layer.rel_clip_scale)
-        rel_bias = r.float() @ layer.rel_proj.float().T          # [24, 1024]
+        # rel_logits_proj.proj is [d_rel, extent] = [16, 1024]; the reference's
+        # einsum("thd,de->the") contracts over d, so it is proj, not proj.T
+        rel_bias = r.float() @ layer.rel_proj.float()             # [24, 1024]
 
         kv = self.kv[slot]
         kv[0, pos] = k.to(kv.dtype)
         kv[1, pos] = v.to(kv.dtype)
         n = pos + 1
         start = 0 if not layer.local else max(0, n - SINK_SLIDING)
-        keys = kv[0, start:n].float()                            # [n, 8, 128]
-        vals = kv[1, start:n].float()
+        keys = kv[0, start:n].float().to(dev)                    # [n, 8, 128]
+        vals = kv[1, start:n].float().to(dev)
 
         qh = q.float().view(ms.NUM_HEADS, ms.HEAD_DIM)
         group = ms.NUM_HEADS // ms.NUM_KV_HEADS
-        scores = torch.einsum("hd,nkd->hnk", qh, keys) / math.sqrt(ms.HEAD_DIM)
-        # relative bias: distance = q_pos - kv_pos, clamped to [0, extent), then
-        # the per-distance bias (same for every KV head of a group) is added
-        dist = (pos - torch.arange(start, n, device=d)).clamp(0, SINK_SLIDING - 1)
-        bias = rel_bias.float()[:, dist].repeat_interleave(group, 0)   # [24, n]
-        scores = scores + bias[:, None, :]
-        probs = torch.softmax(scores, dim=-1)                    # [24, n_kv, n]
+        # GQA: query head h reads KV head h // group, so gather each head's own
+        # KV head rather than computing scores against all eight and discarding.
+        h2kv = torch.arange(ms.NUM_HEADS, device=dev) // group
+        ksel = keys.index_select(1, h2kv)                       # [n_kv, 24, 128]
+        vsel = vals.index_select(1, h2kv)
+        scores = torch.einsum("hd,nhd->hn", qh, ksel) / math.sqrt(ms.HEAD_DIM)
 
-        out = torch.einsum("hkq,qkd->hd", probs,
-                           vals.repeat_interleave(group, 0))     # [24, 128]
-        lse = torch.logsumexp(scores, dim=-1).flatten()           # [24 * n_kv]
-        if lse.numel() != ms.NUM_HEADS:
-            lse = lse.view(ms.NUM_HEADS, -1).max(-1).values
+        # relative bias is a function of distance only, per query head
+        dist = (pos - torch.arange(start, n, device=dev)).clamp(0, SINK_SLIDING - 1)
+        bias = rel_bias.float()[:, dist]                        # [24, n]
+        scores = scores + bias
+
+        probs = torch.softmax(scores, dim=-1)                   # [24, n]
+        out = torch.einsum("hn,nhd->hd", probs, vsel)            # [24, 128]
+        lse = torch.logsumexp(scores, dim=-1)                    # [24]
         sink_sig = torch.sigmoid(lse - sink.float())
-        out = (out.view(-1) * torch.sigmoid(gate.float()) * sink_sig).to(self.dtype)
+        out = (out.reshape(-1) * torch.sigmoid(gate.float()) * sink_sig).to(self.dtype)
         y = (layer.wo_ud.to(self.dtype) @ out).to(self.dtype)
         return short_conv(y, layer.attn_sconv, self.conv_attn[slot])
 
