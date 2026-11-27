@@ -173,3 +173,32 @@ def test_attn_res_returns_one_vector_per_query_row():
     # the three rows must differ: one shared vector would mean the queries
     # collapsed, which is exactly the bug that broke the projection
     assert not torch.allclose(three[0], three[1])
+
+
+def test_expert_gemv_reads_its_own_activation_row():
+    """The down projection must see per-expert activations, not expert 0's.
+
+    Passing a flat 8*I vector made all eight experts read the first one, which
+    produced finite, plausible, wrong output -- the worst kind of bug.
+    """
+    pytest.importorskip("torch")
+    from fikra.inkling_t4l4.gemv_torch import dequant_nvfp4
+    import numpy as np
+
+    topk, k, n = 3, 32, 4
+    codes = torch.zeros(8, n, k // 2, dtype=torch.uint8)
+    scales = torch.full((8, n, k // 16), 0x38, dtype=torch.uint8)
+    # expert 0: identity-ish rows at k=0; others zero, so only row 0 of x matters
+    for e in range(8):
+        codes[e, :, 0] = 0x22       # code 2 = magnitude 1.0 in the low nibble
+    x = torch.zeros(topk, k)
+    x[:, 0] = torch.tensor([1.0, 2.0, 3.0])
+    experts = torch.tensor([0, 1, 2])
+
+    rows = [dequant_nvfp4(codes[e], scales[e].float(), outer_scale=1.0) @ x[s]
+            for s, e in enumerate(experts.tolist())]
+    got = torch.stack(rows)
+    assert torch.allclose(got[:, 0], torch.tensor([1.0, 2.0, 3.0])), got[:, 0]
+    # a flat vector would have given every expert 1.0
+    flat = dequant_nvfp4(codes[0], scales[0].float(), outer_scale=1.0) @ x.reshape(-1)[:k]
+    assert float(flat[0]) != float(got[2, 0])
