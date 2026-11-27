@@ -412,6 +412,7 @@ class InklingRunner:
             src = attn_res(blocks + [partial], q)
             src = (src,) if layer.local else (src, src, src)
         if messages is not None:
+            messages = {k: v.to(dev) for k, v in messages.items()}
             dest = torch.stack([s.float() for s in src], 0)
             mixed = self._mix_message(layer, "attn", dest, [messages["attn"]])
             if layer.local:
@@ -470,7 +471,8 @@ class InklingRunner:
 
         for p in range(ms.NUM_PASSES):
             if p:
-                bank = state["blocks"][len(prelude_blocks) + 1:] + [state["partial"]]
+                bank = [b.to(self.dev) for b in
+                        state["blocks"][len(prelude_blocks) + 1:] + [state["partial"]]]
                 q = self.cross_pass_q.view(ms.NUM_PASSES - 1, -1, ms.HIDDEN)[p - 1]
                 qkv = self.cross_pass_kv_q.view(ms.NUM_PASSES - 1, -1, ms.HIDDEN)[p - 1]
                 m_attn = attn_res(bank, q[:ms.HIDDEN])
@@ -489,7 +491,9 @@ class InklingRunner:
             slot = base + ms.NUM_PASSES * len(core) + k
             self._visit(self.layers[li], state, pos, slot, None, None)
 
-        final = attn_res(state["blocks"] + [state["partial"]], self.output_query)
-        final = rms_norm(final.float(), self.final_norm).to(self.dtype)
+        last = self.devs[-1]
+        final = attn_res([b.to(last) for b in state["blocks"]] + [state["partial"].to(last)],
+                         self.output_query.to(last))
+        final = rms_norm(final.float(), self.final_norm.to(last)).to(self.dtype)
         logits = (self.unembed.to(self.dtype) @ final).float()
         return FINAL_SOFT_CAP * torch.tanh(logits / FINAL_SOFT_CAP)
