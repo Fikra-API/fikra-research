@@ -244,6 +244,15 @@ class InklingRunner:
             return self.devs[0]
         return self.devs[0] if layer < self.split_layer else self.devs[1]
 
+    @staticmethod
+    def _bytes(t):
+        """Reinterpret an FP8 tensor as uint8: the kernels decode it by hand."""
+        if t is None:
+            return None
+        if t.dtype == getattr(torch, "float8_e4m3fn", None):
+            return t.view(torch.uint8)
+        return t
+
     def _layer(self, i: int) -> LayerWeights:
         p = f"model.llm.layers.{i}."
         dev = self.dev_for(i)
@@ -271,8 +280,10 @@ class InklingRunner:
             gate_w=g("mlp.gate.weight"), gate_b=g("mlp.gate.bias"),
             experts={
                 "fmt": "nvfp4" if nv else "mxfp8",
-                "w13": g("mlp.experts.w13_weight"), "s13": g("mlp.experts.w13_weight_scale"),
-                "w2": g("mlp.experts.w2_weight"), "s2": g("mlp.experts.w2_weight_scale"),
+                "w13": self._bytes(g("mlp.experts.w13_weight")),
+                "s13": self._bytes(g("mlp.experts.w13_weight_scale")),
+                "w2": self._bytes(g("mlp.experts.w2_weight")),
+                "s2": self._bytes(g("mlp.experts.w2_weight_scale")),
                 "g13": (g("mlp.experts.w13_weight_amax") / g("mlp.experts.w13_weight_outer_scale_denominator")
                         if nv else None),
                 "g2": (g("mlp.experts.w2_weight_amax") / g("mlp.experts.w2_weight_outer_scale_denominator")

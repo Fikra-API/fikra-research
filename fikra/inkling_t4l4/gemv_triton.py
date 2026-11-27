@@ -49,6 +49,17 @@ def _build_fp4_lut_values():
 if triton is not None:
 
     @triton.jit
+    def _e4m3_to_float(b):
+        """E4M3 byte -> float, by bit assembly (sm75 has no fp8 datatype)."""
+        b32 = b.to(tl.uint8, bitcast=False).to(tl.int32)
+        sign = tl.where((b32 & 0x80) != 0, -1.0, 1.0)
+        e = (b32 >> 3) & 0x0F
+        m = b32 & 0x07
+        normal = (((e - 7 + 127) << 23) | (m << 20)).to(tl.float32, bitcast=True)
+        sub = ((118 << 23) | (m << 20)).to(tl.float32, bitcast=True)
+        return sign * tl.where(e == 0, sub, normal)
+
+    @triton.jit
     def _nvfp4_gemv_kernel(
         X,                 # fp32 [K]
         PACKED,            # uint8 [E, N, K/2]
@@ -81,8 +92,10 @@ if triton is not None:
         for k0 in range(0, K, BLOCK_K):
             offs_k = k0 + tl.arange(0, BLOCK_K)
             k_mask = offs_k < K
-            sc = tl.load(SCALES + expert * stride_se + offs_n[:, None] * stride_sn + offs_k[None, :] // 16,
-                         mask=n_mask[:, None] & k_mask[None, :], other=1.0).to(tl.float32)
+            sb = tl.load(SCALES + expert * stride_se + offs_n[:, None] * stride_sn
+                         + offs_k[None, :] // 16,
+                         mask=n_mask[:, None] & k_mask[None, :], other=0x38)
+            sc = _e4m3_to_float(sb)
             hdr = tl.load(PACKED + expert * stride_pe + offs_n[:, None] * stride_pn + offs_k[None, :] // 2,
                           mask=n_mask[:, None] & k_mask[None, :], other=0)
             lo = (hdr & 0x0F).to(tl.int32)
@@ -109,6 +122,12 @@ def nvfp4_gemv(x: torch.Tensor, packed: torch.Tensor, scales: torch.Tensor,
     real checkpoint result without it is wrong.
     """
     if triton is not None and x.is_cuda:
+        # The scales arrive as raw E4M3 bytes. A float8 tensor cannot even be
+        # handed to Triton on sm75, so reinterpret before it crosses.
+        if scales.dtype != torch.uint8:
+            scales = scales.view(torch.uint8)
+        if packed.dtype != torch.uint8:
+            packed = packed.view(torch.uint8)
         out = torch.zeros((experts.numel(), n), dtype=torch.float32, device=x.device)
         if global_scale is None:
             global_scale = torch.ones(packed.shape[0], dtype=torch.float32, device=x.device)
@@ -188,9 +207,10 @@ def _build_batched_kernel():
         for k0 in range(0, K, BLOCK_K):
             offs_k = k0 + tl.arange(0, BLOCK_K)
             k_mask = offs_k < K
-            sc = tl.load(SCALES + expert * stride_se + offs_n[:, None] * stride_sn
+            sb = tl.load(SCALES + expert * stride_se + offs_n[:, None] * stride_sn
                          + offs_k[None, :] // 16,
-                         mask=n_mask[:, None] & k_mask[None, :], other=1.0).to(tl.float32)
+                         mask=n_mask[:, None] & k_mask[None, :], other=0x38)
+            sc = _e4m3_to_float(sb)
             hdr = tl.load(PACKED + expert * stride_pe + offs_n[:, None] * stride_pn
                           + offs_k[None, :] // 2,
                           mask=n_mask[:, None] & k_mask[None, :], other=0)
