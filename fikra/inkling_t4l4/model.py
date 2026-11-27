@@ -434,22 +434,17 @@ class InklingRunner:
                 src = tuple(m.to(self.dtype) for m in mixed)
         attn = self._attention(layer, src, pos, slot, cross_kv)
 
-        # mlp input
+        # MLP input. The reference splits into two cases:
+        #   block boundary: sources = completed blocks + the old partial, and the
+        #                   attention output REPLACES the partial (no addend)
+        #   otherwise:      sources = completed blocks, with the old partial as a
+        #                   source that the attention output is added to
         if is_boundary:
-            mblocks, mpartial = blocks + [partial], attn
+            sources = list(blocks) + [partial]
         else:
-            mblocks, mpartial = blocks, [partial, attn]
-        if isinstance(mpartial, list):
-            sources = list(mblocks) + [mpartial[0]]
-            # the reference adds the attention output into the partial source
-            # before it is normed and dotted, so it belongs on the operand
-            sources[-1] = sources[-1].float() + mpartial[1].float()
-        else:
-            sources = list(mblocks) + [mpartial]
-        if not mblocks:
-            mlp_in = sources[-1]
-        else:
-            mlp_in = attn_res(sources, self.mlp_queries[layer.layer])
+            sources = list(blocks) + [partial.float() + attn.float()]
+        mlp_in = sources[-1] if len(sources) == 1 else attn_res(
+            sources, self.mlp_queries[layer.layer])
         mlp_in = rms_norm(mlp_in.float().to(self.dtype), layer.mlp_norm)
         if messages is not None:
             mlp_in = self._mix_message(layer, "mlp", mlp_in.float(), [messages["mlp"]])

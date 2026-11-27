@@ -121,6 +121,21 @@ def test_attention_gate_is_per_element_and_sink_per_head():
     assert ms.NUM_HEADS == 24
 
 
+def test_one_visit_produces_a_vector(runner):
+    """The whole layer visit, not just attention: the MLP input must stay 1-D.
+
+    A boundary layer takes the old partial as a source and replaces it; a
+    non-boundary layer adds the attention output into the partial source. Adding
+    both at once made the MLP input a 2x2304 stack, which only shows up here.
+    """
+    for layer_id in (0, 6, 7):
+        layer = runner.layers[0] if layer_id != 6 else runner.layers[1]
+        state = {"blocks": [], "partial": torch.randn(ms.HIDDEN)}
+        runner._visit(layer, state, 0, 0, None, None)
+        assert state["partial"].shape == (ms.HIDDEN), (layer_id, state["partial"].shape)
+        assert torch.isfinite(state["partial"].float()).all()
+
+
 def test_gqa_grouping_is_applied(runner):
     """24 query heads read 8 KV heads, three queries per KV head."""
     group = ms.NUM_HEADS // ms.NUM_KV_HEADS
