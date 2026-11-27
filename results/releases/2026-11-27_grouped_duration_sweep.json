@@ -1,0 +1,42 @@
+{
+  "when": "2026-11-27",
+  "what": "Grouped kernel, duration sweep (NOT a block curve - correcting the label)",
+  "correction": "I labelled this a block-cost curve and it is not. In _grouped() the STEPS loop re-reads the SAME weights; T_MAX is passed but never used to batch tokens. So STEPS is a duration knob, and block cost growing linearly with it is arithmetic, not a finding. Recorded here rather than quietly discarded.",
+  "what_it_does_show": {
+    "measurements": [
+      {
+        "steps": 1,
+        "block_ms": 1.43,
+        "GBps": 16.7
+      },
+      {
+        "steps": 2,
+        "block_ms": 2.75,
+        "GBps": 17.4
+      },
+      {
+        "steps": 4,
+        "block_ms": 5.44,
+        "GBps": 17.6
+      },
+      {
+        "steps": 8,
+        "block_ms": 10.85,
+        "GBps": 17.6
+      },
+      {
+        "steps": 16,
+        "block_ms": 10.27,
+        "GBps": 37.2
+      },
+      {
+        "steps": 32,
+        "block_ms": 20.09,
+        "GBps": 38.0
+      }
+    ],
+    "reading": "Bandwidth rises from 16.7 to 38.0 GB/s as run duration goes from 1.4 ms to 20 ms on the same kernel with the same work per step. That is DVFS warm-up measured directly: short runs under-report bandwidth, and any figure taken from a sub-2 ms launch is measuring clock state.",
+    "consequence_for_earlier_numbers": "The 46.8 GB/s best-of-sweep was taken with 128 steps, i.e. long enough to be in the warmed regime, so it stands. The lower figures from short runs in earlier passes were partly clock state, which is consistent with pass 3's 139% drift."
+  },
+  "still_needed": "A real verify-length curve requires the token dimension to be an actual batched GEMM (T tokens against one weight read), which the grouped kernel does not implement yet. That is the next kernel change."
+}
