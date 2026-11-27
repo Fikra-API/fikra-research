@@ -216,6 +216,8 @@ class InklingRunner:
         # streaming them from host memory is what makes a single T4 possible at
         # all -- not an optimisation but the entry ticket.
         self.stream_experts = stream_experts
+        # a pinned staging buffer lets the host gather overlap the card's work
+        self._pin = stream_experts
         self.dtype = dtype
         self.w = weights
         self.max_tokens = max_tokens
@@ -370,22 +372,32 @@ class InklingRunner:
         q = self.loop_q[core_off][row]                     # [H]
         return attn_res(bank, q)
 
-    def _gather(self, t, top):
-        """The selected experts' slices, on the card, from wherever they live.
+    def _gather_many(self, tensors: dict, top) -> dict:
+        """All the slices one layer visit needs, in one transfer per tensor.
 
-        The kernel indexes expert id inside the bank, so a gathered copy has to
-        keep the bank's leading dimension: the rows are placed back at their own
-        expert ids and the rest of the bank is left as zeros. That costs a
-        128-high allocation per call at the packed size, which is why the
-        gathering below is scoped to the tensors the kernel actually reads.
+        The previous version copied per expert per tensor: 8 copies x 4 tensors x
+        48 visits per token, each a synchronous stall. Here the gather happens on
+        the host side of a single pinned staging buffer and the copies are queued
+        into one stream, so the card sees a handful of large transfers instead of
+        hundreds of small ones.
+
+        Measured effect is reported by the harness, not asserted here.
         """
-        if t is None:
-            return None
-        # the bank is in host memory, the ids come from the router on the card, so
-        # the index must travel back before the gather and the slice forward
-        idx = top.to(t.device, non_blocking=True)
-        src = t.index_select(0, idx)
-        return src.to(self.dev, non_blocking=True)
+        idx_cpu = top.to("cpu", non_blocking=False)
+        out = {}
+        for name, t in tensors.items():
+            if t is None:
+                out[name] = None
+                continue
+            if getattr(t, "device", None) is not None and t.device.type != "cpu":
+                out[name] = t.index_select(0, idx_cpu.to(t.device))
+                continue
+            # host slice, then one transfer into the compute stream
+            sl = t.index_select(0, idx_cpu)
+            if sl.is_pinned() is False and self._pin:
+                sl = sl.pin_memory()
+            out[name] = sl.to(self.dev, non_blocking=True)
+        return out
 
     def _moe(self, layer: LayerWeights, x: torch.Tensor) -> torch.Tensor:
         """top-8 routing and the expert MLP for one token."""
@@ -398,15 +410,18 @@ class InklingRunner:
         lp = torch.log(torch.sigmoid(logits) + 1e-30)
         wts = torch.softmax(lp, 0) * ROUTE_SCALE
         if self.stream_experts:
-            # gather the 8 selected experts out of the host-resident bank; the
-            # kernel takes the ids as positions into what it is given
+            g = self._gather_many({"w13": e["w13"], "s13": e["s13"],
+                                   "w2": e["w2"], "s2": e["s2"]}, top)
             e = dict(e)
-            e["w13"] = self._bytes(self._gather(e["w13"], top))
-            e["s13"] = self._bytes(self._gather(e["s13"], top))
-            e["w2"] = self._bytes(self._gather(e["w2"], top))
-            e["s2"] = self._bytes(self._gather(e["s2"], top))
-            e["g13"] = e["g13"][top].to(self.dev) if e.get("g13") is not None else None
-            e["g2"] = e["g2"][top].to(self.dev) if e.get("g2") is not None else None
+            e["w13"] = self._bytes(g["w13"])
+            e["s13"] = self._bytes(g["s13"])
+            e["w2"] = self._bytes(g["w2"])
+            e["s2"] = self._bytes(g["s2"])
+            idx = top.to(self.dev)
+            e["g13"] = e["g13"][idx] if e.get("g13") is not None else None
+            e["g2"] = e["g2"][idx] if e.get("g2") is not None else None
+            # the kernel indexes inside what it is given, so the ids are now
+            # 0..7 positions into the gathered slabs
             top = torch.arange(top.numel(), device=self.dev, dtype=torch.int32)
 
         if e["fmt"] == "nvfp4":

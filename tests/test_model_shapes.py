@@ -231,6 +231,13 @@ def test_streaming_experts_keeps_the_bank_on_the_host():
     assert bank.shape[0] == ms.NUM_EXPERTS
     # gathered slices must keep the per-expert shapes the kernel expects
     top = torch.tensor([3, 7])
-    got = r._gather(bank, top)
+    got = r._gather_many({"w13": bank}, top)["w13"]
     assert got.shape == (2,) + bank.shape[1:]
     assert torch.equal(got, bank.index_select(0, top))
+
+    # one call must cover every tensor a visit needs, so the number of host-device
+    # transfers does not scale with the expert count
+    bank2 = torch.zeros_like(bank)
+    both = r._gather_many({"w13": bank, "w2": bank2}, top)
+    assert set(both) == {"w13", "w2"}
+    assert both["w2"].shape == (2,) + bank2.shape[1:]
