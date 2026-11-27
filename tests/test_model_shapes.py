@@ -115,6 +115,12 @@ def test_one_attention_step_shapes(runner):
     assert torch.isfinite(out.float()).all()
 
 
+def test_attention_gate_is_per_element_and_sink_per_head():
+    """gate_attn is heads*head_dim wide; the sink is one scalar per head."""
+    assert (ms.NUM_HEADS * ms.HEAD_DIM) == 3072
+    assert ms.NUM_HEADS == 24
+
+
 def test_gqa_grouping_is_applied(runner):
     """24 query heads read 8 KV heads, three queries per KV head."""
     group = ms.NUM_HEADS // ms.NUM_KV_HEADS

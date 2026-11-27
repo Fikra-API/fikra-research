@@ -397,7 +397,10 @@ class InklingRunner:
         out = torch.einsum("hn,nhd->hd", probs, vsel)            # [24, 128]
         lse = torch.logsumexp(scores, dim=-1)                    # [24]
         sink_sig = torch.sigmoid(lse - sink.float())
-        out = (out.reshape(-1) * torch.sigmoid(gate.float()) * sink_sig).to(self.dtype)
+        # gate is [heads * head_dim] and multiplies every output element; the
+        # sink term is per head, so it broadcasts across the head's 128 values
+        elem_gate = torch.sigmoid(gate.float()).view(ms.NUM_HEADS, ms.HEAD_DIM)
+        out = (out * elem_gate * sink_sig[:, None]).reshape(-1).to(self.dtype)
         y = (layer.wo_ud.to(self.dtype) @ out).to(self.dtype)
         return short_conv(y, layer.attn_sconv, self.conv_attn[slot])
 
