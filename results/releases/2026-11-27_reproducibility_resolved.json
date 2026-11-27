@@ -1,0 +1,39 @@
+{
+  "when": "2026-11-27",
+  "what": "Reproducibility resolved: the kernel is stable, the sessions are not",
+  "experiment": "The same tile (bn=4, bw=32, 1 warp) run 5 times inside one session, compared against the same code measured in two earlier sessions.",
+  "within_session": {
+    "runs": [
+      65.1,
+      64.9,
+      64.4,
+      64.0,
+      64.1
+    ],
+    "median": 64.4,
+    "spread_pct": 1.7
+  },
+  "across_sessions": {
+    "v3": 68.8,
+    "v4": 56.3,
+    "this": 64.4,
+    "median": 64.4,
+    "spread_pct": 19.4
+  },
+  "ratio_across_to_within": 13.1,
+  "conclusion": "1.7% within a session against 19.4% across sessions, a 13x ratio, means the kernel is deterministic and the host is not. Every earlier disagreement in this project that I attributed to code was at least partly host variance: pass 1 vs pass 2, the 139% drift, and the 68.8 vs 54.0 gap.",
+  "pooled_best_estimate": {
+    "median_of_8_samples_GBps": 64.4,
+    "parity_target_GBps": 77.5,
+    "ratio_to_parity": 0.83,
+    "projected_tok_s": 18.8,
+    "strata_tok_s": 22.6
+  },
+  "what_this_means_for_the_project": [
+    "64.4 GB/s is the number to quote: median of 8 samples across 3 sessions, not any single best.",
+    "The kernel is at 83% of parity with Strata and 26% of the dense ceiling.",
+    "Projected 18.8 tok/s end to end is below Strata's 22.6, so a full decode built today would lose to the baseline.",
+    "Host variance of +/-10% must be carried on every future figure, which means single sessions cannot settle small optimisations at all."
+  ],
+  "method_adopted": "Any kernel number is the median of >=5 repeats within a session and >=3 sessions, reported with both spreads. Optimisations smaller than ~10% cannot be resolved on this infrastructure and should not be claimed."
+}
