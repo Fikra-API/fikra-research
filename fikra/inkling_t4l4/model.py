@@ -91,13 +91,25 @@ def short_conv(x: torch.Tensor, w: torch.Tensor, cache: torch.Tensor,
                dynamic: torch.Tensor | None = None):
     """Depthwise causal conv over the token axis, kernel 4, residual + scale.
 
-    ``w`` is [D, 1, 4] (static), ``dynamic`` is [D//head_dim, 4] per token for
-    the global-layer K/V streams. Cache is [3, D] holding the last three inputs.
-    The scale is ``(W * (2 if dynamic else 1) + 1) ** -0.5`` -- the ``+1`` is the
-    residual tap counted as a weight, which is what the reference kernel does.
+    The checkpoint stores this weight two ways, and they are not just reshapes:
+
+      local layers   [D, 1, 4]   channel-major, four taps per channel
+      global layers  [4, D]      tap-major, as ``static_w``
+
+    ``dynamic`` is [heads, taps] per token for the global K/V streams. Cache is
+    [3, D] holding the last three inputs. The scale is
+    ``(W * (2 if dynamic else 1) + 1) ** -0.5`` -- the ``+1`` is the residual tap
+    counted as a weight, which is what the reference kernel does.
     """
     d = x.shape[-1]
-    width = min(w.shape[-1], cache.shape[0] + 1)
+    if w.dim() == 2:            # [taps, D] tap-major
+        taps2d = w
+        width = w.shape[0]
+        get_w = lambda t: taps2d[t]
+    else:                       # [D, 1, taps] channel-major
+        width = w.shape[-1]
+        get_w = lambda t: w[:, 0, t]
+    width = min(width, cache.shape[0] + 1)
     cur = x
     taps = []
     for lag in range(width - 1, -1, -1):
@@ -111,7 +123,7 @@ def short_conv(x: torch.Tensor, w: torch.Tensor, cache: torch.Tensor,
         cache[-1] = cur
     acc = None
     for tap, value in enumerate(taps):
-        wt = w[:, 0, tap].to(torch.float32)
+        wt = get_w(tap).to(torch.float32)
         if dynamic is not None:
             heads = dynamic.shape[0]
             wt = wt + dynamic[:, tap].repeat_interleave(d // heads)

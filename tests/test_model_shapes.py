@@ -161,3 +161,15 @@ def test_short_conv_residual_scale():
     x = torch.ones(ms.HIDDEN)
     y = M.short_conv(x, w, cache)
     assert float(y[0]) == pytest.approx((4 + 1) ** -0.5 * 5.0, rel=1e-3)
+
+
+def test_attn_res_returns_one_vector_per_query_row():
+    """A local layer asks with one query, a global layer with three."""
+    sources = [torch.randn(ms.HIDDEN) for _ in range(3)]
+    one = M.attn_res(sources, torch.randn(ms.HIDDEN))
+    assert one.shape == (ms.HIDDEN)
+    three = M.attn_res(sources, torch.randn(3, ms.HIDDEN))
+    assert three.shape == (3, ms.HIDDEN)
+    # the three rows must differ: one shared vector would mean the queries
+    # collapsed, which is exactly the bug that broke the projection
+    assert not torch.allclose(three[0], three[1])
