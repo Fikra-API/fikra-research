@@ -1,0 +1,54 @@
+{
+  "when": "2026-11-27",
+  "what": "Quad (128-bit) load attempt: NOT a win once repeated",
+  "first_measurement": {
+    "default_GBps": 74.6,
+    "claimed_gain_vs_64_4": "16%"
+  },
+  "repeated_measurement": {
+    "runs": [
+      49.3,
+      65.1,
+      66.4,
+      68.3,
+      66.5
+    ],
+    "median_GBps": 66.4,
+    "range": [
+      49.3,
+      68.3
+    ],
+    "spread_pct": 28.6,
+    "finer_sweep_best_GBps": 63.1,
+    "vs_previous_best_ratio": 0.98
+  },
+  "verdict": {
+    "status": "WITHDRAWN",
+    "for": "74.6 GB/s and the 16% gain it implied"
+  },
+  "why": "The first run's 74.6 was the top of a distribution whose median is 66.4 and whose low is 49.3. A 28.6% spread means a single sample cannot support a 16% claim, and the finer sweep on the same code peaks at 63.1, which is inside noise of the 64.4 we already had.",
+  "second_reason_to_doubt_it": "The finer sweep, run right after the repeats in the same session, gives 63.1 for the same tile that first measured 74.6. So even within one session the number is not stable across a sweep, which suggests the first bench benefited from ordering rather than from the load change.",
+  "what_this_reinforces": "The rule adopted earlier - median of 5+ repeats and 3+ sessions before any claim - was written because of exactly this failure mode, and I came within one message of reporting a 16% gain that does not exist. The rule held.",
+  "where_that_leaves_the_target": {
+    "best_supported_GBps": 64.4,
+    "needed_for_60_tok_s": 154.0,
+    "ratio": 0.42,
+    "projected_tok_s_with_fusion": 25.1,
+    "strata_tok_s": 22.6
+  },
+  "changes_tried_today": {
+    "worked": [
+      "grouped experts 27.8->46.8 (+68%)",
+      "scale broadcast 46.8->59 (+27%)",
+      "word loads 59->64.4 (+9%, within noise band)"
+    ],
+    "failed": [
+      "tensor cores -7%",
+      "16-entry LUT -92%",
+      "quad 128-bit loads ~0%",
+      "removing exp2 0%",
+      "hoisting scales +2%"
+    ]
+  },
+  "honest_read": "Five optimisations failed against nine that worked, and the working ones are all about reducing redundant traffic or work per byte. The kernel is at 42% of the bandwidth that 60 tok/s needs, and further micro-optimisation is hitting diminishing returns."
+}
