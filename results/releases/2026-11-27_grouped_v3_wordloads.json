@@ -1,0 +1,35 @@
+{
+  "when": "2026-11-27",
+  "what": "Grouped kernel v3: 32-bit word loads, 8 nibbles per load",
+  "change": "One int32 load now yields eight nibbles, replacing four byte loads for the same data. The eight nibbles of a word accumulate in a single expression rather than eight separate memory-touching chains.",
+  "result": {
+    "v2_best_GBps": 59.3,
+    "v3_best_GBps": 68.8,
+    "via": "bn=4, bw=32 words per tile, 1 warp",
+    "speedup_vs_v2": 1.16,
+    "pct_peak": 21.5
+  },
+  "against_the_budget": {
+    "parity_with_strata_needs_GBps": 77.5,
+    "now": 68.8,
+    "ratio": 0.89,
+    "projected_tok_s": 20.1,
+    "strata_tok_s": 22.6,
+    "pct_of_dense_ceiling": 28.2
+  },
+  "readings": {
+    "instruction_count_matters_more_than_bytes": "v2 gained 27% by removing 8x redundant scale loads that were only 1.6% of traffic. v3 gained 16% by cutting load instructions 4x while touching the same bytes. Both point the same way: this kernel is instruction-bound, not bandwidth-bound, at 68.8 GB/s of a 243.8 ceiling.",
+    "still_short": "68.8 projects to 20.1 tok/s, just under Strata's 22.6. So after a day of work the kernel is at 89% of parity and cannot yet beat the baseline end to end. That is the honest position."
+  },
+  "cumulative_today": {
+    "start_stand_alone_GBps": 27.8,
+    "now": 68.8,
+    "factor": 2.47,
+    "note": "measured under one method, on the same harness"
+  },
+  "next": [
+    "bn=2 and bw=64 arms of the sweep, since the best tile keeps shrinking",
+    "pf (prefetch) staging for the next word while the current decodes",
+    "then the end-to-end wiring once parity is passed"
+  ]
+}
