@@ -381,7 +381,10 @@ class InklingRunner:
         """
         if t is None:
             return None
-        src = t.index_select(0, top)
+        # the bank is in host memory, the ids come from the router on the card, so
+        # the index must travel back before the gather and the slice forward
+        idx = top.to(t.device, non_blocking=True)
+        src = t.index_select(0, idx)
         return src.to(self.dev, non_blocking=True)
 
     def _moe(self, layer: LayerWeights, x: torch.Tensor) -> torch.Tensor:
