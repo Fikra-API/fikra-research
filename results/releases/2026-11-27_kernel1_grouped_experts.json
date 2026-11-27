@@ -1,0 +1,68 @@
+{
+  "when": "2026-11-27",
+  "what": "Kernel #1 pass 5-8: cause isolation, and the grouped-expert win",
+  "method": "Each hypothesis tested alone against the same dense ceiling in the same session, then a tile sweep on the winner.",
+  "ceiling_measured": {
+    "dense_fp32_GBps": 243.8,
+    "pct_of_320_peak": 76.2
+  },
+  "hypotheses_tested": {
+    "scale_hoisting": {
+      "result": "+2%",
+      "verdict": "not the cause"
+    },
+    "tensor_cores_via_tl_dot": {
+      "result": "-7%",
+      "verdict": "worse at M=1; the MMA tile is mostly padding for a single token"
+    },
+    "remove_exp2_from_decode": {
+      "result": "1.00x",
+      "verdict": "not the cause"
+    },
+    "byte_addressed_affine_loads": {
+      "result": "compilation error, not yet measured",
+      "verdict": "inconclusive"
+    },
+    "grouped_expert_launch": {
+      "result": "46.8 GB/s from 27.8",
+      "verdict": "LARGEST WIN"
+    }
+  },
+  "grouped_expert_result": {
+    "what_changed": "One program handles all 8 routed experts for a tile instead of one program per expert. The activation vector is loaded once and reused across all 8, and the grid shrinks by 8x.",
+    "best_tile": {
+      "bn": 16,
+      "bp": 64,
+      "warps": 1
+    },
+    "GBps": 46.8,
+    "pct_peak": 14.6,
+    "previous_best": 27.8,
+    "speedup_vs_previous": 1.68
+  },
+  "position": {
+    "measured": "46.8 GB/s sustained on the grouped kernel",
+    "target": 150,
+    "pct_of_target": 31.2,
+    "pct_of_measured_ceiling": 19.2,
+    "reading": "Two thirds of the way to the target in relative terms from where we started (2.9 -> 46.8 is 16x), still 3.2x short of 150 and 5.2x short of what the card demonstrably does."
+  },
+  "cumulative_progress": {
+    "start_of_day_one": 2.9,
+    "now": 46.8,
+    "factor": 16.1,
+    "note": "the 2.9 figure was itself withdrawn for lack of clock control; the sequence from 27.8 to 46.8 is measured under one method."
+  },
+  "why_grouping_helped_by_this_much": "Per-expert programs each re-read the activation vector and each carry their own launch and scheduling overhead. With top-8 the same 4.6 KB activation read was being done eight times per tile, and the GPU was scheduling 8x more programs than it needed to. Grouping removes both, which is why it beat every arithmetic change combined.",
+  "remaining_gap": [
+    "Still 19% of the dense ceiling, so the decode cost per element is still dominant or the loads are still not vectorising as they should.",
+    "The byte-addressed variant, which was meant to fix vectorisation, still fails to compile; that needs solving before claiming loads are affine.",
+    "bp (packed bytes per tile) interacts strongly with warps, so the schedule is not settled; 46.8 is a best-of-sweep, not a tuned result."
+  ],
+  "next": [
+    "fix the byte-addressed compile error and measure it",
+    "sweep grouped with bn below 16",
+    "re-measure the block-cost curve on the grouped kernel",
+    "then end-to-end decode"
+  ]
+}
