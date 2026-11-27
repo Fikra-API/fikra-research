@@ -323,16 +323,25 @@ class InklingRunner:
 
     # -- helpers ---------------------------------------------------------
     def _mix_message(self, layer: LayerWeights, kind: str, dest: torch.Tensor,
-                     messages: list[torch.Tensor]):
-        """(1 - tanh(h F^T)) dest + tanh(h G^T) message, h = down(rms(dest,msg))."""
+                     messages: list[torch.Tensor]) -> torch.Tensor:
+        """(1 - tanh(h F^T)) * dest + tanh(h G^T) * message, per destination.
+
+        ``dest`` is [n_streams, H]: a local layer has one stream, a global layer
+        has three (Q, K, V), and each is gated by its own row of the controller.
+        h is the down projection of the RMS-normed (dest, message) pair.
+        """
         c = layer.controllers[kind]
         dev = dest.device
         msg = messages[0].float().to(dev)
-        normed = torch.cat([rms_norm(dest.float()), rms_norm(msg)], -1)
-        h = (normed.to(torch.bfloat16) @ c["down"].to(dev).T).float()
-        gain = torch.tanh(h @ c["gain"].to(dev).T)
+        n = dest.shape[0]
+        d = dest.float()
+        # one h per destination: the message is the same, the destination is not
+        pair = torch.cat([rms_norm(d.reshape(-1, d.shape[-1])),
+                          rms_norm(msg).expand(n, -1)], -1)      # [n, 2H]
+        h = (pair.to(torch.bfloat16) @ c["down"].to(dev).T).float()
+        gain = torch.tanh(h @ c["gain"].to(dev).T)                # [n, H]
         forget = torch.tanh(h @ c["forget"].to(dev).T)
-        return (1.0 - forget) * dest.float() + gain * msg
+        return (1.0 - forget) * d + gain * msg.unsqueeze(0)
 
     def _moe(self, layer: LayerWeights, x: torch.Tensor) -> torch.Tensor:
         """top-8 routing and the expert MLP for one token."""
@@ -462,10 +471,7 @@ class InklingRunner:
             messages = {k: v.to(dev) for k, v in messages.items()}
             dest = torch.stack([s.float() for s in src], 0)
             mixed = self._mix_message(layer, "attn", dest, [messages["attn"]])
-            if layer.local:
-                src = (mixed[0].to(self.dtype),)
-            else:
-                src = tuple(m.to(self.dtype) for m in mixed)
+            src = tuple(m.to(self.dtype) for m in mixed)
         attn = self._attention(layer, src, pos, slot, cross_kv)
 
         # MLP input. The reference splits into two cases:
@@ -481,8 +487,9 @@ class InklingRunner:
             sources, self.mlp_queries[layer.layer])
         mlp_in = rms_norm(mlp_in.float().to(self.dtype), layer.mlp_norm)
         if messages is not None:
-            mlp_in = self._mix_message(layer, "mlp", mlp_in.float(), [messages["mlp"]])
-            mlp_in = mlp_in.to(self.dtype)
+            mixed = self._mix_message(layer, "mlp", mlp_in.float().unsqueeze(0),
+                                      [messages["mlp"]])
+            mlp_in = mixed[0].to(self.dtype)
 
         mlp = self._moe(layer, mlp_in)
         mlp = short_conv(mlp, layer.mlp_sconv, self.conv_mlp[slot])
