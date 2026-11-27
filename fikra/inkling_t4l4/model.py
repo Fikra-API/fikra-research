@@ -226,8 +226,14 @@ class InklingRunner:
         self.final_norm = weights["model.llm.norm.weight"].to(self.dev)
         # the unembedding lives with the coda layers, on the last card
         self.unembed = weights["model.llm.unembed.weight"].to(self.devs[-1])
-        self.cross_pass_q = weights["model.llm.middle_cycle_cross_pass_queries"].to(self.dev)
-        self.cross_pass_kv_q = weights["model.llm.middle_cycle_cross_pass_kv_queries"].to(self.dev)
+        # Loop message queries: (core_layers, 4, H) = [attn Q, kv Q, kv V, mlp Q],
+        # each pre-scaled by H**-0.5 as scaled_loop_queries does. One set, reused
+        # on every pass; it is not per-pass.
+        _pq = weights["model.llm.middle_cycle_cross_pass_queries"].float().to(self.dev)
+        _kvq = weights["model.llm.middle_cycle_cross_pass_kv_queries"].float().to(self.dev)
+        stacked = torch.stack((_pq[0::2], _kvq[0::2], _kvq[1::2], _pq[1::2]), dim=1)
+        self.loop_q = (stacked * (stacked.shape[-1] ** -0.5)).to(self.dev)
+        del _pq, _kvq
 
         # A KV slot per layer visit (48 of them): core layers get one per pass,
         # because each pass attends over its own history, not the previous pass's.
@@ -342,6 +348,16 @@ class InklingRunner:
         gain = torch.tanh(h @ c["gain"].to(dev).T)                # [n, H]
         forget = torch.tanh(h @ c["forget"].to(dev).T)
         return (1.0 - forget) * d + gain * msg.unsqueeze(0)
+
+    def _bank_message(self, bank: list[torch.Tensor], core_off: int, row: int):
+        """One loop message: a normalised softmax mix of the previous pass.
+
+        ``row`` selects which of the four stacked queries to score with: 0 for the
+        attention streams, 3 for the MLP. The reference reduces the last dimension
+        of the query the same way, so this is one message per layer per kind.
+        """
+        q = self.loop_q[core_off][row]                     # [H]
+        return attn_res(bank, q)
 
     def _moe(self, layer: LayerWeights, x: torch.Tensor) -> torch.Tensor:
         """top-8 routing and the expert MLP for one token."""
@@ -468,9 +484,10 @@ class InklingRunner:
             src = attn_res(blocks + [partial], q)
             src = (src,) if layer.local else tuple(src)
         if messages is not None:
-            messages = {k: v.to(dev) for k, v in messages.items()}
+            bank = [b.to(dev) for b in messages["bank"]]
+            off = layer.layer - ms.CORE_START
             dest = torch.stack([s.float() for s in src], 0)
-            mixed = self._mix_message(layer, "attn", dest, [messages["attn"]])
+            mixed = self._mix_message(layer, "attn", dest, [self._bank_message(bank, off, 0)])
             src = tuple(m.to(self.dtype) for m in mixed)
         attn = self._attention(layer, src, pos, slot, cross_kv)
 
@@ -488,7 +505,7 @@ class InklingRunner:
         mlp_in = rms_norm(mlp_in.float().to(self.dtype), layer.mlp_norm)
         if messages is not None:
             mixed = self._mix_message(layer, "mlp", mlp_in.float().unsqueeze(0),
-                                      [messages["mlp"]])
+                                      [self._bank_message(bank, off, 3)])
             mlp_in = mixed[0].to(self.dtype)
 
         mlp = self._moe(layer, mlp_in)
@@ -520,15 +537,13 @@ class InklingRunner:
 
         for p in range(ms.NUM_PASSES):
             if p:
-                bank = [b.to(self.dev) for b in
-                        state["blocks"][len(prelude_blocks) + 1:] + [state["partial"]]]
-                q = self.cross_pass_q.view(ms.NUM_PASSES - 1, -1, ms.HIDDEN)[p - 1]
-                qkv = self.cross_pass_kv_q.view(ms.NUM_PASSES - 1, -1, ms.HIDDEN)[p - 1]
-                m_attn = attn_res(bank, q[:ms.HIDDEN])
-                m_mlp = attn_res(bank, q[ms.HIDDEN:])
-                m_k = attn_res(bank, qkv[:ms.HIDDEN])
-                m_v = attn_res(bank, qkv[ms.HIDDEN:])
-                messages = {"attn": m_attn, "mlp": m_mlp}
+                # the bank is everything the previous pass wrote, plus its partial
+                bank = [b.float() for b in state["blocks"][len(prelude_blocks):]]
+                if state["partial"] is not None:
+                    bank = bank + [state["partial"].float()]
+                if not bank:
+                    bank = [prelude_partial.float()]
+                messages = {"bank": bank}
                 state = {"blocks": list(prelude_blocks), "partial": prelude_partial}
             else:
                 messages = None
