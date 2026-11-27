@@ -1,0 +1,71 @@
+{
+  "when": "2026-11-28T01:20Z",
+  "what": "First end-to-end token through our own code, with the real 19.5 GB checkpoint",
+  "why_this_document_exists": "Until now every number in this repository was a projection or a single-layer probe. No token had ever been run through our implementation. The budget tables in decode_budget.py and the release notes describing 12.5-25.1 tok/s are calculations, not measurements, and this file exists so the two can never be confused again.",
+
+  "prior_state": {
+    "tokens_ever_run_through_our_code": 0,
+    "what_those_numbers_were": "analytic. bytes-per-token arithmetic applied to a measured kernel bandwidth of 64.4 GB/s. Never validated by a running model.",
+    "kernels_that_had_run": "kernel #1 (NVFP4 GEMV) in isolation, and one real MoE layer through the numpy oracle. Nothing above layer scale."
+  },
+
+  "measured": {
+    "checkpoint_download_seconds": 46.0,
+    "checkpoint_gb": 19.53,
+    "tensors_loaded": 822,
+    "load_seconds": 12.6,
+    "model_build_seconds": 33.9,
+    "vram_gb_per_card": [9.84, 9.19],
+    "hardware": "2x Tesla T4, 15.64 GB each, 33.7 GB host RAM",
+    "prefill_tokens": 21,
+    "prefill_seconds": 183.57,
+    "prefill_tok_s": 0.11,
+    "decode_steps": 24,
+    "decode_median_ms": 6842.97,
+    "decode_tok_s": 0.15,
+    "decode_vs_all": 0.15,
+    "decode_min_ms": 6839.07,
+    "decode_max_ms": 6846.27,
+    "decode_spread_pct": 0.1
+  },
+
+  "output": {
+    "text": ": proposal reviewed the the proposal:::::::::::::",
+    "distinct_tokens": 5,
+    "logits_finite": true,
+    "logit_top1": 29.882,
+    "logit_std": 4.601,
+    "verdict": "DEGENERATE. Real Inkling produces coherent text. Repetition of one phrase and twelve identical colons means at least one stage is numerically wrong, so the 0.15 tok/s is a speed measurement of a broken model and must not be quoted as Inkling throughput."
+  },
+
+  "comparison": {
+    "strata_sq15_single_t4_tok_s": 22.6,
+    "our_measured_tok_s": 0.15,
+    "ratio": "1/150",
+    "why_the_gap_is_not_the_kernel": "6.84 s/token is ~1500 python-level operations per token (48 layer visits x ~30 ops) plus a per-visit dtype cast of layer weights. The Triton kernel itself runs at 64.4 GB/s in a tight loop. Rewriting the kernel cannot move 6.84 s; removing per-op overhead can."
+  },
+
+  "bugs_found_by_running": [
+    "SiTU self-check asserted 4.0 where SiTU gives 100",
+    "attn_res.attn_queries has 23 entries indexed by layer-1, not 24",
+    "rel_logits_proj is [16, 1024] and contracts over d_rel, not its transpose",
+    "relative attention bias is per query head, not per KV head",
+    "the KV einsum ignored GQA grouping entirely",
+    "attention gate is per element (3072), the sink per head (24)",
+    "attention-residual addend was applied twice at a block boundary",
+    "sm75 cannot represent fp8 at all: Triton refuses to compile until scales are raw uint8",
+    "attn_res returned one vector instead of one per query row",
+    "global layers store the conv weight [4, D], local layers [1, 4]",
+    "attn-res queries were on cuda:0 against sources on cuda:1",
+    "every expert read expert 0's activations for the down projection",
+    "cross-pass queries are (core_layers, 4, H), one set reused on every pass",
+    "controller weights are bf16 against an fp32 h",
+    "Triton launches on the current device, not the tensor's: cuda:1 layers ran on cuda:0"
+  ],
+
+  "next": {
+    "first": "numerical comparison against SGLang on the same prompt, stage by stage, to find the stage producing the degenerate output",
+    "second": "CUDA graph per token, batched 8-expert launch, hoisted dtype casts, fused core passes",
+    "explicitly_not": "presenting 0.15 tok/s as an Inkling result before the output is coherent"
+  }
+}

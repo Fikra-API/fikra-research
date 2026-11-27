@@ -53,6 +53,37 @@ QLoRA on 1x L4 and 2x T4, one-click Kaggle notebooks.
 Targets are not results. Numbers appear here only once measured, with the
 raw JSON in `results/`.
 
+## Where the numbers actually stand
+
+**Status 2026-11-28: one token has now been run end to end, and it is degenerate.**
+
+Before 2026-11-28 nothing had ever been run through this implementation above
+layer scale. Every throughput figure in the planning documents (`12.5`, `25.1`,
+`37.6`, `50.1` tok/s, and the `60` target) was arithmetic: measured
+bytes-per-token multiplied by a measured kernel bandwidth of 64.4 GB/s. None was
+a running model. That distinction was not stated clearly enough, which is why
+this section exists.
+
+First real measurement, 2x T4, the full 19.53 GB checkpoint, our NVFP4 and MXFP8
+kernels, 48 layer visits:
+
+| | measured |
+|---|---|
+| decode | **0.15 tok/s** (6.843 s/token, 0.1% spread over 24 steps) |
+| prefill | 0.11 tok/s (183.6 s for 21 prompt tokens) |
+| output | `: proposal reviewed the the proposal:::::::::::::` |
+| distinct tokens in 20 | 5 |
+| Strata SQ-15, single T4 | 22.6 tok/s |
+
+The stack runs. The output is wrong, so **0.15 tok/s is a speed measurement of a
+broken model and is not an Inkling throughput result.** Finding why the output
+degenerates is the next step, and it is a numerical comparison against SGLang
+stage by stage rather than more speculation.
+
+The 150x gap to Strata is also not a kernel problem: 6.84 s per token is about
+1500 python-level operations, not bandwidth. See
+`results/releases/2026-11-28_first_real_token.json`.
+
 ## Benchmark 500
 
 Quality is measured on the frozen 500-task suite (LiveCodeBench 100, MMLU-Pro

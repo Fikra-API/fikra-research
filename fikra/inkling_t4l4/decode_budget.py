@@ -2,7 +2,20 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-"""Analytic decode budget: is 60 tok/s (T4) or 100 tok/s (L4) reachable at all?
+"""Analytic decode budget
+
+THIS MODULE IS ARITHMETIC, NOT MEASUREMENT. Nothing here has been validated by a
+running model: no token had been run through this implementation when these
+projections were written. The one end-to-end measurement that exists (2x T4,
+2026-11-28) produced 0.15 tok/s with degenerate output, and it disagrees with
+every number below by two orders of magnitude because the realised bottleneck is
+python-level operation count, not the bandwidth this module models. Treat every
+figure as a target and check `results/releases/2026-11-28_first_real_token.json`
+before quoting one.
+
+Original docstring follows.
+
+Analytic decode budget: is 60 tok/s (T4) or 100 tok/s (L4) reachable at all?
 
 Single-stream decode is bandwidth bound. Per token we must read every weight a
 token touches: 48 layer visits, but the core layers' weights are read once and
