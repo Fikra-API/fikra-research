@@ -1,0 +1,21 @@
+{
+  "when": "2026-11-27",
+  "what": "First attempt at a quality baseline for Strata SQ-15, and why it is void",
+  "result": {
+    "accuracy": "100% on 40 tasks at both temperature 1.0 and 0.0"
+  },
+  "why_void": [
+    "The public Benchmark 500 manifest carries prompt HASHES, not prompt text, so I wrote probe prompts from templates instead of using the real items.",
+    "Those templates produce ONE question per suite, repeated 10 times. The run is therefore 4 distinct questions asked 10 times each, not 40 tasks.",
+    "The 4 questions are trivial: 17*3+2, a textbook free-fall question, a textbook intensive-property question, and a one-clause sentence rewrite.",
+    "100% on 4 easy questions at two temperatures says the model is not broken. It says nothing about accuracy on the 500-task suite."
+  ],
+  "what_a_real_quality_baseline_needs": [
+    "the actual prompt text for each task, which lives in the dataset rows the manifest points at (dataset + dataset_revision + source_id), not in the manifest itself",
+    "a fetch of each dataset at the pinned revision, then the row matching source_id",
+    "the official scorer per suite, since IFEval and BFCL have format-sensitive graders and a regex substitute will not match published numbers",
+    "enough tasks for a confidence interval: 40 tasks gives +/-15 points at 95% on a 50% accuracy, which cannot distinguish 96.68% from 100%"
+  ],
+  "honest_position": "There is still no quality number for Strata. The 100% figure is discarded, not reported. Speed (22.6 tok/s) remains the only measured Strata figure we have.",
+  "cost_estimate_for_the_real_run": "Fetching 4 suites at pinned revisions is roughly 1-3 GB of data and the official scorer work is a day. Sampling 100-200 real tasks per suite at ~20 tok/s is several hours of GPU per suite."
+}
