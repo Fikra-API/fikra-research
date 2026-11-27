@@ -344,9 +344,9 @@ class InklingRunner:
         # one h per destination: the message is the same, the destination is not
         pair = torch.cat([rms_norm(d.reshape(-1, d.shape[-1])),
                           rms_norm(msg).expand(n, -1)], -1)      # [n, 2H]
-        h = (pair.to(torch.bfloat16) @ c["down"].to(dev).T).float()
-        gain = torch.tanh(h @ c["gain"].to(dev).T)                # [n, H]
-        forget = torch.tanh(h @ c["forget"].to(dev).T)
+        h = (pair.to(torch.bfloat16) @ c["down"].to(dev).to(torch.bfloat16).T).float()
+        gain = torch.tanh(h @ c["gain"].to(dev).float().T)        # [n, H]
+        forget = torch.tanh(h @ c["forget"].to(dev).float().T)
         return (1.0 - forget) * d + gain * msg.unsqueeze(0)
 
     def _bank_message(self, bank: list[torch.Tensor], core_off: int, row: int):
